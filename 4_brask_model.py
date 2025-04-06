@@ -42,7 +42,7 @@ def get_relation_embedings(relations):
       relation_embedings.append(r_j)
       print("embed has been appended")
     
-    print(f"\t \t relation embeddings shape: {relations_embeddings.shape}")
+    print(f"\t \t relation embeddings shape: {relation_embedings.shape}")
     return relation_embedings
 
 
