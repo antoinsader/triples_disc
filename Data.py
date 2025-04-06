@@ -9,16 +9,17 @@ root = "."
 
 RAW_FOLDER = f"{root}/data/raw"
 HELPERS_FOLDER = f"{root}/data/helpers"
-TRANSE_FOLDER = f"{root}/data/transe"
 TRANSE_CHECKPOINT_FOLDER = f"{root}/data/transe/checkpoint"
 
+TEMP_FOLDER = f"{root}/data/temp"
+TRANSE_FOLDER = f"{root}/data/transe"
 DICTIONARIES_FOLDER = f"{root}/data/dictionaries"
 DESCRIPTIONS_FOLDER = f"{DICTIONARIES_FOLDER}/descriptions"
 DESCRIPTIONS_NORMALIZED_FOLDER = f"{DICTIONARIES_FOLDER}/descriptions_normalized"
 TRIPLES_FOLDER = f"{DICTIONARIES_FOLDER}/triples"
 RELATIONS_FOLDER = f"{DICTIONARIES_FOLDER}/relations"
 
-folders_to_check = [TRANSE_CHECKPOINT_FOLDER, TRANSE_FOLDER, DESCRIPTIONS_NORMALIZED_FOLDER, HELPERS_FOLDER, TRIPLES_FOLDER, RELATIONS_FOLDER,DICTIONARIES_FOLDER, DESCRIPTIONS_FOLDER]
+folders_to_check = [TRANSE_CHECKPOINT_FOLDER, TEMP_FOLDER, TRANSE_FOLDER, DESCRIPTIONS_NORMALIZED_FOLDER, HELPERS_FOLDER, TRIPLES_FOLDER, RELATIONS_FOLDER,DICTIONARIES_FOLDER, DESCRIPTIONS_FOLDER]
 for fo in folders_to_check:
     if not os.path.exists(fo):
         os.makedirs(fo)
@@ -84,6 +85,10 @@ PKLS_FILES = {
 }
 
 
+TEMP_FILES = {
+    "descriptions_ds": f"{TEMP_FOLDER}/desc_ds.pkl",
+    "relations_ds": f"{TEMP_FOLDER}/rel_ds.pkl",
+}
 
 HELPER_FILES = {
     "strange_chars": f"{HELPERS_FOLDER}/strange_chars.pkl"

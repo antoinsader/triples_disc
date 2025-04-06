@@ -11,7 +11,7 @@ import numpy as np
 import math
 
 
-from Data import PKLS_FILES
+from Data import PKLS_FILES, TEMP_FILES
 from utils.utils import cache_array, read_cached_array
 
 
@@ -22,21 +22,27 @@ def get_relation_embedings(relations):
     model = BertModel.from_pretrained('bert-base-cased')
     model.eval()
     relation_embedings = []
+    print(f"\t \t create relation embeddings from bert from : {len(relations)} relations")
     for label in relations:
-        inputs = tokenizer(label, return_tensors="pt")
-        with torch.no_grad():
-            outputs = model(**inputs, output_hidden_states=True)
-        
-        hidden_states = outputs.hidden_states 
-        
-        last_layer = hidden_states[-1].squeeze(0) # (seq_len, hidden_size)
-        before_last_layer = hidden_states[-2].squeeze(0)
-        
-        average_layers = (last_layer + before_last_layer) / 2.0
-        r_j = average_layers.mean(dim=0)
-        
-        relation_embedings.append(r_j)
-        
+      print(f"other label: {label}")
+      inputs = tokenizer(label, return_tensors="pt")
+      with torch.no_grad():
+          outputs = model(**inputs, output_hidden_states=True)
+      
+      hidden_states = outputs.hidden_states 
+      
+      last_layer = hidden_states[-1].squeeze(0) # (seq_len, hidden_size)
+      before_last_layer = hidden_states[-2].squeeze(0)
+      
+      average_layers = (last_layer + before_last_layer) / 2.0
+
+      r_j = average_layers.mean(dim=0)
+      print(f"\t\t r_j: {r_j.shape}")
+      
+      relation_embedings.append(r_j)
+      print("embed has been appended")
+    
+    print(f"\t \t relation embeddings shape: {relations_embeddings.shape}")
     return relation_embedings
 
 
@@ -83,11 +89,17 @@ class SentencesDS(Dataset):
 class RelationsDS(Dataset):
     def __init__(self, relations_dict, relations_transe_embs):
         self.relations_dict = relations_dict 
+
         self.ids = list(relations_dict.keys())
         self.relations_lst = list(relations_dict.values())
+        print(f"\t relations has {len(self.ids)} ids ")
         embeddings_list = get_relation_embedings(self.relations_lst)
+        print(f"embs list is: {embeddings_list}")
+
         self.embeddings = torch.stack(embeddings_list, dim=0)  #(num_relations, hidden_size)
+        print(f"\t embeddings has shape {self.embeddings.shape} ")
         self.transe_embeddings = relations_transe_embs
+        print(f"\t embeddings transe has shape {self.transe_embeddings.shape} ")
         
         
     
@@ -348,12 +360,29 @@ class MyBRASKModel(nn.Module):
         
         return forward_triples, backward_triples
         
-def train_model(k, transE_emb_size=80):
-  descriptions = read_cached_array(PKLS_FILES["descriptions_normalized"][k])
-  relations = read_cached_array(PKLS_FILES["relations"][k])
-  relations_transE = read_cached_array(PKLS_FILES["transE_relation_embeddings"])
-  descriptions_dataset = SentencesDS(descriptions)
-  relations_dataset = RelationsDS(relations, relations_transE)
+def train_model(k, transE_emb_size=80, use_cached_ds=False):
+  if use_cached_ds: 
+    print("reading cached desc ds")
+    descriptions_dataset = read_cached_array(TEMP_FILES["descriptions_ds"])
+    print("reading cached rels ds")
+    relations_dataset = read_cached_array( TEMP_FILES["relations_ds"])
+    
+  else:
+    # print("reading descriptions.. ")
+    # descriptions = read_cached_array(PKLS_FILES["descriptions_normalized"][k])
+    # print("reading relations")
+    relations = read_cached_array(PKLS_FILES["relations"][k])
+    print("reading relations transe ")
+    relations_transE = read_cached_array(PKLS_FILES["transE_relation_embeddings"])
+    
+    print("creating desc ds ")
+    # descriptions_dataset = SentencesDS(descriptions)
+    # cache_array(descriptions_dataset, TEMP_FILES["descriptions_ds"])
+    print("create relations ds")
+    relations_dataset = RelationsDS(relations, relations_transE)
+    cache_array(relations_dataset, TEMP_FILES["relations_ds"])
+
+
   model = MyBRASKModel(transE_emb_size=transE_emb_size)
   forward_triples, backward_triples = model(descriptions_dataset, relations_dataset)
   return forward_triples, backward_triples
@@ -361,13 +390,13 @@ def train_model(k, transE_emb_size=80):
 if __name__ == '__main__':
     k  = 1_000
     transE_emb_size = 100
-    # forward_triples, backward_triples = train_model(k, transE_emb_size)
+    forward_triples, backward_triples = train_model(k, transE_emb_size=transE_emb_size, use_cached_ds=False )
     
     forward_triples_f = PKLS_FILES["forward_triples"][k]
     backward_triples_f = PKLS_FILES["backward_triples"][k]
     
-    # cache_array(forward_triples, forward_triples_f)
-    # cache_array(backward_triples, backward_triples_f)
+    cache_array(forward_triples, forward_triples_f)
+    cache_array(backward_triples, backward_triples_f)
     
     
     
