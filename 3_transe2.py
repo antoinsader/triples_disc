@@ -8,7 +8,7 @@ from tqdm import tqdm
 
 from Data import PKLS_FILES
 from utils.utils import cache_array, read_cached_array
-
+import os
 
 import torch
 import random
@@ -101,13 +101,13 @@ class TransEModel(nn.Module):
         neg_dist = torch.norm(neg_head_entity + neg_rel_entity - neg_tail_entity, dim=1)
         
         return pos_dist, neg_dist
-import os
-def save_checkpoint(model, optimizer, epoch, loss, filename="checkpoint.pth"):
+
+def save_checkpoint(model, optimizer, epoch, last_total_loss, filename="checkpoint.pth"):
     checkpoint = {
-        "epoch": epoch,
+       "epoch": epoch,
         "model_state_dict": model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
-        "loss": loss
+        "last_total_loss": last_total_loss
     }
     torch.save(checkpoint, filename)
     
@@ -117,11 +117,11 @@ def load_checkpoint(model, optimizer, filename="checkpoint.pth"):
         model.load_state_dict(checkpoint["model_state_dict"])
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         start_epoch = checkpoint["epoch"] + 1
-        last_loss = checkpoint["loss"]
-        print(f"Resumed from epoch {start_epoch} with loss {last_loss:.4f}")
-        return start_epoch
+        last_total_loss = checkpoint["last_total_loss"]
+        print(f"Resumed from epoch {start_epoch} with loss {last_total_loss:.4f}")
+        return start_epoch, last_total_loss
     else:
-        return 0
+        return 0, 0.0
     
 def calc_loss(pos_dist, neg_dist, margin):
     #loss = mean (max(0, margin + pos_dist - neg_dist))
@@ -134,14 +134,17 @@ def train_model(triples_dict, n_ents, n_rels, emb_dim=100, lr=0.001, num_epochs=
     dataset = TripleDataset(triples_dict)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True,
                         num_workers=num_workers, pin_memory=True)
-    model = torch.compile(TransEModel(n_ents, n_rels, emb_dim=emb_dim, margin=margin, p_norm=p_norm))
+    model = TransEModel(n_ents, n_rels, emb_dim=emb_dim, margin=margin, p_norm=p_norm)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+
 
     optimizer = optim.Adam(model.parameters(), lr=lr )
-    start_epoch = load_checkpoint(model, optimizer, filename=checkpoint_path)
+    start_epoch, last_total_loss = load_checkpoint(model, optimizer, filename=checkpoint_path)
     
-    with tqdm(range(start_epoch, num_epochs), desc="Training Epochs", total=num_epochs) as pbar_epoch:
+    with tqdm(range(start_epoch - 1, num_epochs), desc="Training Epochs", total=(num_epochs-start_epoch - 1)) as pbar_epoch:
         for epoch in pbar_epoch:
-            total_loss = 0.0
+            total_loss = last_total_loss
             batch_count = 0
             for pos_batch in tqdm(dataloader, desc=f"Epoch {epoch+1}", leave=False):
                 pos_batch = pos_batch.long()
@@ -167,7 +170,7 @@ def train_model(triples_dict, n_ents, n_rels, emb_dim=100, lr=0.001, num_epochs=
                 
             avg_loss = total_loss / batch_count if batch_count > 0 else 0.0
             pbar_epoch.set_postfix(epoch=epoch+1, avg_loss=f"{avg_loss:.4f}")
-            save_checkpoint(model, optimizer, epoch, avg_loss, filename=checkpoint_path)
+            save_checkpoint(model, optimizer, epoch, total_loss, filename=checkpoint_path)
 
     return  model.rel_embs.weight.data
 def prep_triples(triples_dict):
@@ -176,12 +179,12 @@ def prep_triples(triples_dict):
     triples_ar = []    
 
     for t_head, tr_lst in triples_dict.items():
-        
         triples_ar.extend(tr_lst)
         for (h,r,t) in tr_lst:
             ents.add(h)
             ents.add(t)
             rels.add(r)
+
     #converting to torch tensor: 
     ents_ids = {ent: idx for idx, ent in enumerate(ents)}
     rel_ids = {rel: idx for idx, rel in enumerate(rels)}
@@ -192,13 +195,15 @@ def prep_triples(triples_dict):
     return len(ents), len(rels), triples_ar
             
 if __name__=="__main__":
-    k = 1_000
+    k = 100
     
     triples_dict = read_cached_array(PKLS_FILES["triples"][k])
     
     n_ents, n_rels, triples =   prep_triples(triples_dict)
     print(f"We have {n_ents} entities, {n_rels} relationships and {triples.shape} triples")
-    rel_embeddings = train_model(triples, n_ents, n_rels, emb_dim=100, lr=0.001, num_epochs=200, batch_size=128)
+    #I did for k=1_000 num_epochs = 140 and it was nice, for full I did batch_size: 52224, but I did some modifications to laverage big gpu
+    rel_embeddings = train_model(triples, n_ents, n_rels, emb_dim=100, lr=0.001, num_epochs=140, batch_size=24)
     print(f"relation embeddings shape: {rel_embeddings.shape}")
     cache_array(rel_embeddings,  PKLS_FILES["transE_relation_embeddings"])
     
+

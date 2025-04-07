@@ -46,7 +46,7 @@ def normalize_desc_parallel(descs_all, num_workers = 8):
 
 
 if __name__ == '__main__':
-    k = 1_000
+    k = 100
     num_workers = 4
     
     descriptions = read_cached_array(PKLS_FILES["descriptions"][k])

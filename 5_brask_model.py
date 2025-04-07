@@ -191,11 +191,26 @@ def extract_triples(token_embs, idxs, start_probs, end_probs, threshold=.5):
         obj_end_vec = end_probs[sentence_idx, :, subj_idx, rel_idx]
         obj_idxs = extract_obj_spans_relation(obj_start_vec, obj_end_vec, threshold)
         for obj_idx in obj_idxs:
-          sentence_triples.append((subj_obj_spans[subj_idx], rel_idx, obj_idx))
+          #We should do the obj as head ??!! 
+          sentence_triples.append((obj_idx, rel_idx,subj_obj_spans[subj_idx] ))
       batch_triples.append(sentence_triples)
 
   return batch_triples
 
+def merge_triples(forward_triples, backward_triples):
+  """
+    args:
+      forwarD_triples: List (len=batch_size ? ) of items, each item is a triple (head_idx, rel_idx, obj_idx)  
+      backward_triples: List (len=batch_size ? ) of items, each item is a triple (head_idx, rel_idx, obj_idx)  
+    returns:
+      list of triples (length=batch_size) and each item is  a triple (h,r,t)  
+  
+  """
+  final_triples = []
+  for f_triples, b_triples in zip(forward_triples, backward_triples):
+    final = list(set(f_triples).intersection(set(b_triples)))
+    final_triples.append(final)
+  return final_triples
 class MyBRASKModel(nn.Module):
     def __init__(self,  hidden_size=768, transE_emb_size=80):
         super(MyBRASKModel, self).__init__()
@@ -308,6 +323,7 @@ class MyBRASKModel(nn.Module):
             self.W_r(relation_exp) + self.W_g(h_g_exp) + self.W_x(token_embs_exp)
         ) # (batch_size, seq_len, num_relations, hidden_size)
         
+        
         #backward
         b_e = torch.tanh(
             self.W_r_b(b_relation_exp) + self.W_g_b(h_g_exp) + self.W_x_b(token_embs_exp)
@@ -357,31 +373,14 @@ class MyBRASKModel(nn.Module):
         forward_triples  = extract_triples(token_embs, subj_idxs, obj_start_probs, obj_end_probs)
         backward_triples  = extract_triples(token_embs, b_obj_idxs, b_sub_start_probs, b_sub_end_probs)
         
+        merge_triples(forward_triples, backward_triples )
+
         
         return forward_triples, backward_triples
         
-def train_model(k, transE_emb_size=80, use_cached_ds=False):
-  if use_cached_ds: 
-    print("reading cached desc ds")
-    descriptions_dataset = read_cached_array(TEMP_FILES["descriptions_ds"])
-    print("reading cached rels ds")
-    relations_dataset = read_cached_array( TEMP_FILES["relations_ds"])
-    
-  else:
-    # print("reading descriptions.. ")
-    # descriptions = read_cached_array(PKLS_FILES["descriptions_normalized"][k])
-    # print("reading relations")
-    relations = read_cached_array(PKLS_FILES["relations"][k])
-    print("reading relations transe ")
-    relations_transE = read_cached_array(PKLS_FILES["transE_relation_embeddings"])
-    
-    print("creating desc ds ")
-    # descriptions_dataset = SentencesDS(descriptions)
-    # cache_array(descriptions_dataset, TEMP_FILES["descriptions_ds"])
-    print("create relations ds")
-    relations_dataset = RelationsDS(relations, relations_transE)
-    cache_array(relations_dataset, TEMP_FILES["relations_ds"])
-
+def train_model(descriptions_dataset,relations_dataset, transE_emb_size=100):
+  
+  
 
   model = MyBRASKModel(transE_emb_size=transE_emb_size)
   forward_triples, backward_triples = model(descriptions_dataset, relations_dataset)
@@ -390,7 +389,32 @@ def train_model(k, transE_emb_size=80, use_cached_ds=False):
 if __name__ == '__main__':
     k  = 1_000
     transE_emb_size = 100
-    forward_triples, backward_triples = train_model(k, transE_emb_size=transE_emb_size, use_cached_ds=False )
+
+    use_cached_ds = False
+
+    if use_cached_ds: 
+      print("reading cached desc ds")
+      descriptions_dataset = read_cached_array(TEMP_FILES["descriptions_ds"])
+      print("reading cached rels ds")
+      relations_dataset = read_cached_array( TEMP_FILES["relations_ds"])
+      
+    else:
+      # print("reading descriptions.. ")
+      # descriptions = read_cached_array(PKLS_FILES["descriptions_normalized"][k])
+      # print("reading relations")
+      relations = read_cached_array(PKLS_FILES["relations"][k])
+      print("reading relations transe ")
+      relations_transE = read_cached_array(PKLS_FILES["transE_relation_embeddings"])
+      
+      print("creating desc ds ")
+      # descriptions_dataset = SentencesDS(descriptions)
+      # cache_array(descriptions_dataset, TEMP_FILES["descriptions_ds"])
+      print("create relations ds")
+      relations_dataset = RelationsDS(relations, relations_transE)
+      cache_array(relations_dataset, TEMP_FILES["relations_ds"])
+
+
+    forward_triples, backward_triples = train_model(k, transE_emb_size=transE_emb_size, )
     
     forward_triples_f = PKLS_FILES["forward_triples"][k]
     backward_triples_f = PKLS_FILES["backward_triples"][k]

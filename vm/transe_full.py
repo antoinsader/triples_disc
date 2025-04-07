@@ -493,8 +493,7 @@ def load_checkpoint(model, optimizer, filename="./checkpoint.pth"):
         print(f"\t loading state optimizer")
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         start_epoch = checkpoint["epoch"] + 1
-        # last_total_loss = checkpoint["last_total_loss"]
-        last_total_loss = 0.0
+        last_total_loss = checkpoint["last_total_loss"]
         print(f"\t Resumed from epoch {start_epoch} with last_total_loss {last_total_loss:.4f}")
         return start_epoch, last_total_loss
     else:

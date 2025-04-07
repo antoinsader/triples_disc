@@ -70,6 +70,14 @@ PKLS_FILES = {
         10_000: f"{RELATIONS_FOLDER}/relations_min_10k.pkl",
         1_000_000: f"{RELATIONS_FOLDER}/relations_min_1m.pkl"
     },
+    "relations_embs": {
+        "full": f"{RELATIONS_FOLDER}/relations_embs_full.pkl",
+        10: f"{RELATIONS_FOLDER}/relations_embs_min_10.pkl",
+        100: f"{RELATIONS_FOLDER}/relations_embs_min_100.pkl",
+        1_000: f"{RELATIONS_FOLDER}/relations_embs_min_1k.pkl",
+        10_000: f"{RELATIONS_FOLDER}/relations_embs_min_10k.pkl",
+        1_000_000: f"{RELATIONS_FOLDER}/relations_embs_min_1m.pkl"
+    },
     "forward_triples": {
         "full": f"{RELATIONS_FOLDER}/relations_full.pkl",
         10_000: f"{RELATIONS_FOLDER}/relations_min_10k.pkl",
@@ -82,12 +90,20 @@ PKLS_FILES = {
     },
     "transE_relation_embeddings": f"{TRANSE_FOLDER}/relation_embs.pkl" ,
     "transE_entity_embeddings": f"{TRANSE_FOLDER}/entity_embs.pkl" ,
+
+
 }
 
 
 TEMP_FILES = {
-    "descriptions_ds": f"{TEMP_FOLDER}/desc_ds.pkl",
-    "relations_ds": f"{TEMP_FOLDER}/rel_ds.pkl",
+    "dataset":{
+         "full": f"{TEMP_FOLDER}/dataset_full.pkl",
+        10: f"{TEMP_FOLDER}/dataset_min_10.pkl",
+        100: f"{TEMP_FOLDER}/dataset_min_100.pkl",
+        1_000: f"{TEMP_FOLDER}/dataset_min_1k.pkl",
+        10_000: f"{TEMP_FOLDER}/dataset_min_10k.pkl",
+        1_000_000: f"{TEMP_FOLDER}/dataset_min_1m.pkl"
+    } 
 }
 
 HELPER_FILES = {

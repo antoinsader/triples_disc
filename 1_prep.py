@@ -155,5 +155,5 @@ if __name__ == '__main__':
     # create_triples_dict()
     # create_relations_dict()
     
-    create_min(1_000)
-    1+1
+    create_min(100)
+    # 1+1
