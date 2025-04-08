@@ -146,6 +146,7 @@ def train_model(triples_dict, n_ents, n_rels, emb_dim=100, lr=0.001, num_epochs=
         for epoch in pbar_epoch:
             total_loss = last_total_loss
             batch_count = 0
+            last_loss = 0.0
             for pos_batch in tqdm(dataloader, desc=f"Epoch {epoch+1}", leave=False):
                 pos_batch = pos_batch.long()
                 
@@ -162,17 +163,20 @@ def train_model(triples_dict, n_ents, n_rels, emb_dim=100, lr=0.001, num_epochs=
                 #normalize embs to unit length
                 model.ent_embs.weight.data = F.normalize(model.ent_embs.weight.data, p=2, dim=1)
                 model.rel_embs.weight.data = F.normalize(model.rel_embs.weight.data , p=2, dim=1)
+                last_loss = loss.item()
                 
-                total_loss += loss.item()
+                total_loss += last_loss
                 batch_count += 1
                 
                 
-                
             avg_loss = total_loss / batch_count if batch_count > 0 else 0.0
-            pbar_epoch.set_postfix(epoch=epoch+1, avg_loss=f"{avg_loss:.4f}")
+            pbar_epoch.set_postfix(epoch=epoch+1, avg_loss=f"{avg_loss:.4f}",last_loss=last_loss )
             save_checkpoint(model, optimizer, epoch, total_loss, filename=checkpoint_path)
 
     return  model.rel_embs.weight.data
+
+
+
 def prep_triples(triples_dict):
     ents = set()
     rels = set()
@@ -202,7 +206,7 @@ if __name__=="__main__":
     n_ents, n_rels, triples =   prep_triples(triples_dict)
     print(f"We have {n_ents} entities, {n_rels} relationships and {triples.shape} triples")
     #I did for k=1_000 num_epochs = 140 and it was nice, for full I did batch_size: 52224, but I did some modifications to laverage big gpu
-    rel_embeddings = train_model(triples, n_ents, n_rels, emb_dim=100, lr=0.001, num_epochs=140, batch_size=24)
+    rel_embeddings = train_model(triples, n_ents, n_rels, emb_dim=100, lr=0.001, num_epochs=120, batch_size=24)
     print(f"relation embeddings shape: {rel_embeddings.shape}")
     cache_array(rel_embeddings,  PKLS_FILES["transE_relation_embeddings"])
     

@@ -115,6 +115,6 @@ if __name__ == "__main__":
     rel_embs_opt = get_rel_embs_opt(relations, relations_full_dict)
 
     print(f" len(rel_embs_opt): {len(rel_embs_opt)}, shape[0]: {rel_embs_opt[0].shape}")
-
-    cache_array(rel_embs_opt, PKLS_FILES["relations_embs"][k] )
+    rel_embs = torch.stack(rel_embs_opt, dim=0)
+    cache_array(rel_embs, PKLS_FILES["relations_embs"][k] )
     

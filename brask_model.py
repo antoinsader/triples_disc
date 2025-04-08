@@ -13,6 +13,18 @@ import math
 
 from Data import PKLS_FILES, TEMP_FILES
 from utils.utils import cache_array, read_cached_array
+import random
+
+
+seed = 42
+torch.manual_seed(seed)
+random.seed(seed)
+np.random.seed(seed)
+
+# If using CUDA:
+if torch.cuda.is_available():
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
 
 
 
@@ -111,25 +123,76 @@ def extract_first_embeddings(token_embs, start_probs, end_probs, max_len, thresh
 
     return padded_embs, mask_embs, start_idxs
 
-def extract_last_spans_relation(start_probs, end_probs, threshold):
-    pass 
+def extract_last_idxs(start_probs, end_probs, threshold):
+    """
+      args:
+        start_probs, end_probs are vectors with length of L, those are for one sentence 
+      returns:
+        idxs: a list where each item contains (start_idx, end_idx) of entities in the sentence
+    """
+    start_idxs = torch.nonzero(start_probs > threshold).squeeze()
+    end_idxs = torch.nonzero(end_probs > threshold).squeeze()
+    
+    if start_idxs.ndim == 0:
+        start_idxs = start_idxs.unsqueeze(0)
+    if end_idxs.ndim == 0:
+        end_idxs = end_idxs.unsqueeze(0)
 
-def extract_triples(token_embs, first_idxs, start_probs, end_probs, threshold=.6):
+    idxs = []
+    used_ends = set()
+    
+    for start_idx in start_idxs.tolist():
+        for end_idx in end_idxs.tolist():
+            if end_idx >= start_idx and end_idx not in used_ends:
+                idxs.append((start_idx, end_idx))
+                used_ends.add(end_idx)
+                break
+            
+    return idxs 
+  
+
+
+def extract_triples(first_idxs, start_probs, end_probs,is_forward, threshold=.6):
     """
         args:
-            token_embs: shape (B, L , R)
             first_idxs list with len = B, each one is list of indexes for the starting entities. List sentence-1[(start_ent_start_idx, start_ent_end_idx ), ...]
             start_probs, end_probs with shape (B, L, R)
+        does:
+          loop through sentences in the batch
+          for each relationship: find objects that has high probability to make (rel, obj)
+          assign those to each subject to have (sub, rel, obj)
+          (I am saying sub,rel,obj but in backward it would be obj,rel,sub)
+        
+        returns:
+          batch_triples: which is a list with size of B and each item is a list having the triples
+          
+
     """
     batch_size, seq_len, num_rels = start_probs.shape
-    batch_triples = []
-    for sentence_idx in range(batch_size):
+    batch_triples  = []
+    
+    for b in range(batch_size):
         sentence_triples = []
-        sentence_first_idxs = first_idxs[sentence_idx]
-        n_valid_first = len(sentence_first_idxs)
+        sentence_first_idxs = first_idxs[b]
+        
+        for rel in range(num_rels):
+            last_start_vec = start_probs[b, :, rel]
+            last_end_vec = end_probs[b, :, rel]
+            last_idxs = extract_last_idxs(last_start_vec, last_end_vec, threshold)
+            
+            for first_idx in sentence_first_idxs:
+                for last_idx in last_idxs:
+                    # if is forward:
+                    #     subject_end_idx should be < obj_start_idx 
+                    # if backward:
+                    #     obj_start_idx > subject_end_idx
+                    if (is_forward and first_idx[1] < last_idx[0]) or (not is_forward and first_idx[0] > last_idx[1]):
+                      sentence_triples.append((first_idx,rel ,last_idx))
+        batch_triples.append(sentence_triples)
+    
+    return batch_triples    
         
 
-    pass 
 
 def merge_triples(forward_triples, backward_triples):
   """
@@ -148,28 +211,51 @@ def merge_triples(forward_triples, backward_triples):
 
 
 
-class BRASKDataSet(Dataset):
-    def __init__(self, descriptions_dict, relations_embs, relations_embs_transE , desc_max_length=128):
-        tokenizer =BertTokenizer.from_pretrained('bert-base-cased')
-        model = BertModel.from_pretrained('bert-base-cased')
 
-        sentences = list(descriptions_dict.values())
-        self.h_gs, self.embs = get_h_gs(sentences, tokenizer, model, max_length=desc_max_length  )  #  h_gs (batch_size, hidden_size), embs (batch_size, seq_len, hidden_size)
-        print(f"self embs shape: {self.embs.shape}")
-        self.relations_embs = torch.stack(relations_embs, dim=0)  #(num_relations, hidden_size)
-        self.relations_embs_transE = relations_embs_transE # should be (num_relations, 100)
-    
+class BRASKDataSet(Dataset):
+    def __init__(self, descriptions_dict , desc_max_length=128):
+        if descriptions_dict is not None:
+            
+            tokenizer =BertTokenizer.from_pretrained('bert-base-cased')
+            model = BertModel.from_pretrained('bert-base-cased')
+
+            sentences = list(descriptions_dict.values())
+            self.h_gs, self.embs = get_h_gs(sentences, tokenizer, model, max_length=desc_max_length  )  #  h_gs (batch_size, hidden_size), embs (batch_size, seq_len, hidden_size)
+            
+            
+            print(f"self embs shape: {self.embs.shape}")
+            
     def __getitem__(self,idx):
         return  {"h_gs": self.h_gs[idx], "embs": self.embs[idx] }
     def __len__(self):
         return self.h_gs.shape[0]
+    
+    def save(self, path):
+        di = {
+            "h_gs": self.h_gs.cpu(),
+            "embs": self.embs.cpu(),
+        }
+        cache_array(di, path)
+    @classmethod
+    def load(cls, path):
+        print("loadding dataset from cache.. ")
+        data = read_cached_array(path)
 
+        dataset = cls.__new__(cls)
+        dataset.h_gs = data["h_gs"]
+        print(f"\t dataset.h_gs.shape: {dataset.h_gs.shape}")
+        dataset.embs = data["embs"]
+        print(f"\t dataset.embs.shape: {dataset.embs.shape}")
+        
+        return dataset
 class BRASKModel(nn.Module):
-    def __init__(self, rel_embs, rel_transe_embs, hidden_size=768, transE_emb_dim=100, thresholds=[.5,.5,.5,.5]):
+    def __init__(self, rel_embs, rel_transe_embs, hidden_size=768, transE_emb_dim=100, thresholds=[.5,.5,.5,.5], device="cpu"):
         super(BRASKModel, self).__init__()
         self.sigmoid = nn.Sigmoid()
 
-        self.rel_embs, self.rel_transe_embs = rel_embs, rel_transe_embs
+        self.rel_embs = rel_embs.to(device)
+        self.rel_transe_embs = rel_transe_embs.to(device)
+        
         self.transE_emb_dim = transE_emb_dim
 
         #f_subj, b_obj, f_obj, b_subj
@@ -232,9 +318,12 @@ class BRASKModel(nn.Module):
                 b: backward (object, relation, subject)
                  
         """
-        h_gs = ds_batch["h_gs"] # (b, h)
-        token_embs = ds_batch["embs"] #(b, l, h)
-        f_rel_embs =  self.rel_embs # (r, h)
+        device = ds_batch["h_gs"].device
+
+
+        h_gs = ds_batch["h_gs"].to(device) # (b, h)
+        token_embs = ds_batch["embs"].to(device) #(b, l, h)
+        f_rel_embs =  self.rel_embs.to(device) # (r, h)
         b_rel_transe_embs = self.rel_transe_embs #(r, h_transE)
 
         # project transE embeddings into bert space
@@ -263,7 +352,7 @@ class BRASKModel(nn.Module):
 
 
         b_padded_obj_embs, b_mask_obj_embs, b_obj_idxs = extract_first_embeddings(
-            token_embs, f_sub_start_probs, f_sub_end_probs, seq_len, threshold=self.b_obj_threshold) # b_padded_obj_embs has shape (B, L, H)
+            token_embs, b_obj_start_probs, b_obj_end_probs, seq_len, threshold=self.b_obj_threshold) # b_padded_obj_embs has shape (B, L, H)
 
         # f_s_w is Wsf(S_k) for forwad (all subject embeddings weighted), 
         # b_o_w is Wsb(O_k) for backward (all objet embeddings weighted), 
@@ -349,35 +438,47 @@ class BRASKModel(nn.Module):
 
 
 
-        # forward_triples  = extract_triples(token_embs, f_subj_idxs, f_obj_start_probs, f_obj_end_probs, threshold=self.f_obj_threshold )
-        # backward_triples  = extract_triples(token_embs, b_obj_idxs, b_sub_start_probs, b_sub_end_probs, threshold=self.b_subj_threshold)
+        forward_triples  = extract_triples(f_subj_idxs, f_obj_start_probs, f_obj_end_probs,  True , threshold=self.f_obj_threshold )
+        backward_triples = extract_triples(b_obj_idxs, b_sub_start_probs, b_sub_end_probs,  False, threshold=self.b_subj_threshold)
         
+        print(f"len forward triples:  {len(forward_triples)}, first item in forward triple len: {len(forward_triples[0])} and first item: {forward_triples[0]}")
+        print(f"len backward triples:  {len(backward_triples)}, first item in backward  triple len: {len(backward_triples[0])} and first item: {backward_triples[0]}")
 
 
         
         print("****************")
 
         return forward_triples, backward_triples
-def train_model(dataset,k,thresholds, transE_emb_dim=100, batch_size=128, num_workers=8, learning_rate=0.001, num_epochs=1000):
+
+def train_model(dataset,k,thresholds, transE_emb_dim=100, batch_size=128, num_workers=8, learning_rate=0.001, num_epochs=1000, device="cpu"):
+    print("loading dataloader..")
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True,
                         num_workers=num_workers, pin_memory=True)
     
+    relations_embs = read_cached_array(PKLS_FILES["relations_embs"][k])
+    relations_embs_transE = read_cached_array(PKLS_FILES["transE_relation_embeddings"])
+
+
+    
     ###### REMEMBER TO MAKE IT torch.compile  in production
-    model = BRASKModel(dataset.relations_embs, dataset.relations_embs_transE, transE_emb_dim=transE_emb_dim, thresholds=thresholds)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print("creating model..")
+    model = torch.compile(BRASKModel(relations_embs, relations_embs_transE, transE_emb_dim=transE_emb_dim, thresholds=thresholds,device=device))
     model.to(device)
 
     # optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     # start_epoch, last_total_loss = load_checkpoint(model, optimizer, filename=checkpoint_path)
     
+    print("starting epochs loop")
     for epoch in range(num_epochs):
         total_loss = 0 
         for ds_batch in dataloader:
+            ds_batch = {key: value.to(device) for key, value in ds_batch.items()}
             forward_triples, backward_triples = model(ds_batch)
+            break
 
-
-
+        break
     return [], []
+
 
 
 if __name__ == "__main__":
@@ -389,22 +490,27 @@ if __name__ == "__main__":
     num_epochs = 1
     #f_subj, b_obj, f_obj, b_subj
     thresholds = [.5,.5,.5,.5]
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    
 
-    use_cached_ds = True
+    use_cached_ds = False
 
     if use_cached_ds:
         print("reading cached ds")
-        dataset = read_cached_array(TEMP_FILES["dataset"][k] )
-    
+        dataset = BRASKDataSet.load(TEMP_FILES["dataset"][k])
+        
     else:
         print("reading dictionaries...")
         descriptions_dict = read_cached_array(PKLS_FILES["descriptions_normalized"][k])
         y_triples = read_cached_array(PKLS_FILES["triples"][k])
-        relations_embs = read_cached_array(PKLS_FILES["relations_embs"][k])
-        relations_embs_transE = read_cached_array(PKLS_FILES["transE_relation_embeddings"])
-
+        
         print("creating ds")
-        dataset = BRASKDataSet(descriptions_dict, relations_embs, relations_embs_transE)
-        cache_array(dataset, TEMP_FILES["dataset"][k] )
+        dataset = BRASKDataSet(descriptions_dict)
+        dataset.save(TEMP_FILES["dataset"][k])
 
-    forward_triples, backward_triples = train_model(dataset, k, transE_emb_dim=transE_emb_dim, batch_size=batch_size, num_workers=num_workers, learning_rate=learning_rate, num_epochs=num_epochs, thresholds=thresholds)
+    # forward_triples, backward_triples = train_model(dataset, k, transE_emb_dim=transE_emb_dim, batch_size=batch_size,
+    #                                                 num_workers=num_workers, learning_rate=learning_rate, 
+    #                                                 num_epochs=num_epochs, thresholds=thresholds, 
+    #                                                 device=device)

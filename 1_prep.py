@@ -13,6 +13,7 @@
 from collections import defaultdict
 from tqdm import tqdm
 import re 
+from joblib import Parallel, delayed
 
 
 from utils.utils import read_cached_array, cache_array,load_descriptions_dict_from_text, load_aliases_dict_from_text, load_relations, load_triples, minimize_dict
@@ -67,11 +68,12 @@ def create_relations_dict():
 #    will create desc_min_dict which is random k values from the full descriptions 
 
 def create_min(k):
-    
+    keys_not_in_als = read_cached_array(HELPER_FILES["keys_not_in_als"])
     print("read dictionaries..")
-    desc_all_dict = read_cached_array(PKLS_FILES["descriptions"]["full"])
+    desc_all_dict = read_cached_array(PKLS_FILES["descriptions_normalized"]["full"])
     triples_all_dict = read_cached_array(PKLS_FILES["triples"]["full"])
     relations_all_dict = read_cached_array(PKLS_FILES["relations"]["full"])
+    aliases_all_dict = read_cached_array(PKLS_FILES["aliases_rev_norm"])
     
     print("minimizing descriptions..")
     desc_min_dict = minimize_dict(desc_all_dict, k)
@@ -80,13 +82,17 @@ def create_min(k):
     desc_ids_to_add = set(desc_min_dict.keys())    
     relation_ids_to_add = set()
     
+    
     min_triples = defaultdict(list)
     for d_id in tqdm(desc_min_dict.keys(), total = len(desc_min_dict), desc="getting triples from descriptions" ):
         triples_lst = triples_all_dict[d_id]
-        for _, r, t in triples_lst:
+        for h, r, t in triples_lst:
+            if h in keys_not_in_als or t in keys_not_in_als:
+                continue
             relation_ids_to_add.add(r)
+            desc_ids_to_add.add(h)
             desc_ids_to_add.add(t)
-        min_triples[d_id] = triples_lst
+            min_triples[d_id].append((h,r,t))
     
     print("Creating full descriptions and full relations")
     last_min_desc_dict = {}
@@ -98,20 +104,30 @@ def create_min(k):
         if r_id in relations_all_dict:
             last_min_relations_dict[r_id] = relations_all_dict[r_id]
     
+    aliases_dict = {}
+    for d_id in last_min_desc_dict.keys():
+        if d_id in aliases_all_dict:
+            aliases_dict[d_id] = aliases_all_dict[d_id]
+        
+        
+    
     print(f"We have {len(last_min_desc_dict)} descriptions")
+    print(f"We have {len(aliases_dict)} aliases heads")
     print(f"We have {len(min_triples)} head triples")
     print(f"We have {len(last_min_relations_dict)} relations")
     
-    min_desc_dict_f = PKLS_FILES["descriptions"][k]
+    min_desc_dict_f = PKLS_FILES["descriptions_normalized"][k]
     min_triples_dict_f = PKLS_FILES["triples"][k]
     min_relations_dict_f = PKLS_FILES["relations"][k]
+    min_aliases_dict_f = PKLS_FILES["aliases"][k]
+    
     
     
     cache_array(last_min_desc_dict, min_desc_dict_f)
     cache_array(min_triples, min_triples_dict_f)
     cache_array(last_min_relations_dict, min_relations_dict_f)
+    cache_array(aliases_dict, min_aliases_dict_f)
     
-
 
 
 def save_strange_chars_dict():
@@ -146,6 +162,20 @@ def save_strange_chars_dict():
     }.items()]
     cache_array(compiled_patterns, HELPER_FILES['strange_chars'])
 
+def save_desc_keys_not_in_als():
+    print("reading dicts...")
+    aliases_all_dict = read_cached_array(PKLS_FILES["aliases_rev"])
+    desc_all_dict = read_cached_array(PKLS_FILES["descriptions"]["full"])
+
+    desc_keys = desc_all_dict.keys()
+    als_keys_set = set(aliases_all_dict.keys())
+    print("starting..")
+    not_in_als = [d_id for d_id in desc_keys if d_id not in als_keys_set]
+    
+
+    print(f"{len(not_in_als)}/{len(desc_keys)} of desc keys not are in  aliases")
+    cache_array(not_in_als, HELPER_FILES["keys_not_in_als"])
+
 
     
 if __name__ == '__main__':
@@ -155,5 +185,10 @@ if __name__ == '__main__':
     # create_triples_dict()
     # create_relations_dict()
     
-    create_min(100)
+    # save_desc_keys_not_in_als()
+    
+    
+    
+    #do create min only after normalization
+    create_min(10)
     # 1+1
