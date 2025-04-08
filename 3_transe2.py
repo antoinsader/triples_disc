@@ -52,13 +52,13 @@ def negative_sampling(pos_triples, n_entities):
             neg_triples[i, 2] = torch.randint(high=n_entities, size=(1,))
     return neg_triples
 
-#transe model: 
-# we have entity e which is embeded by a vector e 
-# we have relation r which is embeded by a vector r 
-# We have a score for triple which is || h + r - t || 
-# The goal is to make distiance small for positive triples and big for negative sample by at least a margin 
-
 class TransEModel(nn.Module):
+    """
+        we have entity e which is embeded by a vector e 
+        we have relation r which is embeded by a vector r 
+        We have a score for triple which is || h + r - t || 
+        The goal is to make distiance small for positive triples and big for negative sample by at least a margin 
+    """
     def __init__(self, n_entities, n_relations, emb_dim=100, margin=1.0, p_norm=1):
         super(TransEModel, self).__init__()
         
@@ -178,6 +178,16 @@ def train_model(triples_dict, n_ents, n_rels, emb_dim=100, lr=0.001, num_epochs=
 
 
 def prep_triples(triples_dict):
+    """
+        args:
+            triples_dict containing as key the head_entity_id and as value the list of triples for that head 
+        does:
+            - convert the triples to the shape of [(h, r, t), (h,r,t), ...]
+            - calculate number of unique relationships
+            - calculate number of unique entities
+        returns: 
+            - len(ents), len(rels), triples_ar
+    """
     ents = set()
     rels = set()
     triples_ar = []    

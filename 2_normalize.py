@@ -11,6 +11,14 @@ from Data import get_compiled_strange_chars, PKLS_FILES
 
 
 def normalize_description_BRASK(sentence):
+    """
+        args:
+            - sentence: need to be normalized 
+        does:
+            - use nfkc and remove multiple white spaces
+        return:
+            - normalized sentence
+    """
     sentence = unicodedata.normalize('NFKC', sentence)
     sentence = re.sub(r'\s+', ' ', sentence).strip()
     # sentence = re.sub(r'\([^)]*\)', '', sentence)
@@ -18,6 +26,15 @@ def normalize_description_BRASK(sentence):
 
 
 def normalize_desc_batch_BRASK(descs_batch):
+    """
+        args:
+            descs_batch: a batch of description dictionary 
+        does:
+            - Replace strange chars in the batch texts
+            - Execute normalize_description_BRASK on every sentence in the dictionary
+        return: 
+            normalized dict 
+    """
     compiled_strange_patterns = get_compiled_strange_chars()
     descs_batch = {k:  replace_special_chars(v, compiled_strange_patterns) for k,v in descs_batch.items()}
     
@@ -31,6 +48,18 @@ def normalize_desc_batch_BRASK(descs_batch):
     
     
 def normalize_desc_parallel(descs_all, num_workers = 8):
+    """
+        args:
+            descs_all: dictionary containing all descriptions need to be normalized
+            num_workers: the num of workers where parallel processing would be distributed
+        does:
+            - create batches from the description (for improvements I can use dataset dataloaders)
+            - call the function normalize_desc_batch_BRASK by parallel processing 
+            - merge the results and return them 
+        returns: 
+            - normalized description dictionary 
+            
+    """
     batch_size = max(1, len(descs_all) // num_workers)
     desc_batches = batch_dict(descs_all, batch_size)
     print(f"normalizing on numworkers: {num_workers}, batch_size is {batch_size} ")

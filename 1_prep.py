@@ -20,9 +20,13 @@ from utils.utils import read_cached_array, cache_array,load_descriptions_dict_fr
 from Data import RAW_TXT_FILES, PKLS_FILES, HELPER_FILES
 
 
-# will create descriptions dict from the raw text file and save the result in pickle file
-#    descriptions_dict would have {document_id: description}
 def create_descriptions_dict():
+    """"
+        does:
+            - Create description dict from raw text file and save resuls in pickle file 
+            - the dict  {document_id: description_text}
+    """
+    
     desc_raw_f = RAW_TXT_FILES["descriptions"]
     descriptions_dict_f = PKLS_FILES["descriptions"]["full"]
     print(f"Full description is being created and will be saved in {descriptions_dict_f}...")
@@ -30,10 +34,16 @@ def create_descriptions_dict():
     cache_array(descriptions_dict, descriptions_dict_f)
 
 
-# will create two aliases dicts from the raw text file of aliases and save them in pickle files
+# 
 #    aliases_dict would have {alias_name: document_id}
 #    aliases_dict_rev would have {document_id: [alias_name1, alias_name2, ...]}
 def create_aliases_dicts():
+    """
+        does:
+            - will create two aliases dicts from the raw text file of aliases and save them in pickle files
+            - aliases_dict would have {alias_text: document_id}
+            - aliases_dict_rev would have {document_id: [alias_1, alias_2, ...]}
+    """
     raw_f = RAW_TXT_FILES["aliases"]
     dict_f = PKLS_FILES["aliases_dict"]
     dict_rev_f = PKLS_FILES["aliases_rev"]
@@ -44,9 +54,12 @@ def create_aliases_dicts():
     cache_array(aliases_dict, dict_f)
     cache_array(aliases_rev, dict_rev_f)
 
-#   triples_dict would have {head: [triple1, triple2, ...]} and each triple is a triple (head, relation, tail)
-#    head, relation and tail are all ids. head, tail id refering to document_id and relation id refering to relation_id
 def create_triples_dict():
+    """
+        does:
+        - triples_dict would have {head: [triple1, triple2, ...]} and each triple is a triple (head, relation, tail)
+        - head, relation and tail are all ids. head, tail id refering to document_id (same as keys in deescription and aliases_rev) and relation id refering to relation_id (key in relations_dict)
+    """
     raw_f = RAW_TXT_FILES["triples"]
     dict_f = PKLS_FILES["triples"]["full"]
     triples_dict = load_triples(raw_f)
@@ -54,8 +67,11 @@ def create_triples_dict():
     cache_array(triples_dict, dict_f)
     
 
-#  relations_dict would have {relation_id: [relation_name1, relation_name2, ...]}
 def create_relations_dict():
+    """
+        does:
+            - relations_dict would have {relation_id: [relation_name1, relation_name2, ...]}
+    """
     raw_f = RAW_TXT_FILES["relations"]
     dict_f = PKLS_FILES["relations"]["full"]
     relations = load_relations(raw_f)
@@ -68,6 +84,21 @@ def create_relations_dict():
 #    will create desc_min_dict which is random k values from the full descriptions 
 
 def create_min(k):
+    """
+        args:
+            k: number from [10, 100, 1000, 10_000, 1_000_000]
+        does:
+            - minimizing descriptions full to k
+            - get triples with head in the descriptions 
+            - from the triples, the relationship add it to relation_ids that we will return, and the tail add it to the descriptions I need to add
+            - Create new min relationsip from the relations of the triples
+            - Update description to include descriptions of the tails in the triples
+            - Create aliases dictionary from the description_ids I have 
+        return: 
+            - nothing but the dictionaries are saved in 
+            -  descriptions_normalized[k], triples[k], relations[k], aliases[k]
+    """
+
     keys_not_in_als = read_cached_array(HELPER_FILES["keys_not_in_als"])
     print("read dictionaries..")
     desc_all_dict = read_cached_array(PKLS_FILES["descriptions_normalized"]["full"])
@@ -131,6 +162,10 @@ def create_min(k):
 
 
 def save_strange_chars_dict():
+    """
+        does:
+            - save file of compiled strange chars with their subtitution, used for normalization after
+    """
     compiled_patterns = [(re.compile(pattern, re.IGNORECASE), replacement) for pattern, replacement in {
         r"[€“©]": "",
         r"[áăắặằẳẵǎâấậầẩẫäǟȧǡạȁàảȃāąåǻḁãǽǣ]": "a",
@@ -163,6 +198,10 @@ def save_strange_chars_dict():
     cache_array(compiled_patterns, HELPER_FILES['strange_chars'])
 
 def save_desc_keys_not_in_als():
+    """
+        does:
+            - Create a pkl file containing description keys that are not in the aliases
+    """
     print("reading dicts...")
     aliases_all_dict = read_cached_array(PKLS_FILES["aliases_rev"])
     desc_all_dict = read_cached_array(PKLS_FILES["descriptions"]["full"])
