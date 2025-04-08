@@ -179,16 +179,15 @@ def save_desc_keys_not_in_als():
 
     
 if __name__ == '__main__':
-    # save_strange_chars_dict()
-    # create_descriptions_dict()
-    # create_aliases_dicts()
-    # create_triples_dict()
-    # create_relations_dict()
+    save_strange_chars_dict()
+    create_descriptions_dict()
+    create_aliases_dicts()
+    create_triples_dict()
+    create_relations_dict()
     
-    # save_desc_keys_not_in_als()
+    save_desc_keys_not_in_als()
     
     
     
     #do create min only after normalization
-    create_min(10)
-    # 1+1
+    # create_min(10)

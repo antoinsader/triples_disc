@@ -55,27 +55,21 @@ def train_transE(triples,modelSaveFolder ,training_fraction=0.8, batch_size=1024
     print("Relation embeddings shape:", relation_embeddings.shape)
     return entity_embeddings, relation_embeddings
 if __name__ == "__main__":
-    k = 1_000 
+    # TRANSE IMPLEMENTATION IS IN FILE 3_transe2.py
+     
+    # k = 1_000 
     
     
-    triples = read_cached_array(PKLS_FILES["triples"][k])
-    triples_ar = []
-    for tr_head, trpls in triples.items():
-        triples_ar.extend(trpls)
-    triples_ar = np.array(triples_ar)    
+    # triples = read_cached_array(PKLS_FILES["triples"][k])
+    # triples_ar = []
+    # for tr_head, trpls in triples.items():
+    #     triples_ar.extend(trpls)
+    # triples_ar = np.array(triples_ar)    
 
     
-    transe_model_folder = TRANSE_FOLDER
-    entity_embeddings, relation_embeddings = train_transE(triples_ar, transe_model_folder, batch_size=128, device="cpu")
+    # transe_model_folder = TRANSE_FOLDER
+    # entity_embeddings, relation_embeddings = train_transE(triples_ar, transe_model_folder, batch_size=128, device="cpu")
     
-    cache_array(relation_embeddings,  PKLS_FILES["transE_relation_embeddings"])
-    cache_array(entity_embeddings , PKLS_FILES["transE_entity_embeddings"] )
+    # cache_array(relation_embeddings,  PKLS_FILES["transE_relation_embeddings"])
+    # cache_array(entity_embeddings , PKLS_FILES["transE_entity_embeddings"] )
     
-    # result = load_pipeline_result(transe_model_folder)
-    # mrr = result.metric_results.get_metric('MRR')
-    # print("MRR on test set:", mrr)
-    # entity_embeddings = result.model.entity_representations[0]()
-    # relation_embeddings = result.model.relation_representations[0]()
-    
-    # print("Entity embeddings shape:", entity_embeddings.shape)
-    # print("Relation embeddings shape:", relation_embeddings.shape)

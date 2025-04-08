@@ -50,18 +50,16 @@ def normalize_desc_parallel(descs_all, num_workers = 8):
 if __name__ == '__main__':
     k = "full"
     num_workers = 4
-    # descriptions = read_cached_array(PKLS_FILES["descriptions"][k])
-    aliases = read_cached_array(PKLS_FILES["aliases_dict"])
+    descriptions = read_cached_array(PKLS_FILES["descriptions"][k])
+    normalized_descs = normalize_desc_parallel(descriptions, num_workers)
+    cache_array(normalized_descs, PKLS_FILES["descriptions_normalized"][k])
     
     
-    # normalized_descs = normalize_desc_parallel(descriptions, num_workers)
-    normalized_als = normalize_desc_parallel(aliases, num_workers)
-    
-    # cache_array(normalized_descs, PKLS_FILES["descriptions_normalized"][k])
-    
-    als_rev = defaultdict(list)
-    for als, als_id in normalized_als.items():
-        als_rev[als_id].append(als)
-    cache_array(als_rev, PKLS_FILES["aliases_rev_norm"])
+    # aliases = read_cached_array(PKLS_FILES["aliases_dict"])
+    # normalized_als = normalize_desc_parallel(aliases, num_workers)
+    # als_rev = defaultdict(list)
+    # for als, als_id in normalized_als.items():
+    #     als_rev[als_id].append(als)
+    # cache_array(als_rev, PKLS_FILES["aliases_rev_norm"])
     
     
