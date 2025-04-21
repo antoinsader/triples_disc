@@ -19,8 +19,13 @@ DESCRIPTIONS_NORMALIZED_FOLDER = f"{DICTIONARIES_FOLDER}/descriptions_normalized
 TRIPLES_FOLDER = f"{DICTIONARIES_FOLDER}/triples"
 ALIASES_FOLDER = f"{DICTIONARIES_FOLDER}/aliases"
 RELATIONS_FOLDER = f"{DICTIONARIES_FOLDER}/relations"
+GOLDEN_TRIPLES_FOLDER = f"{DICTIONARIES_FOLDER}/golden_triples"
 
-folders_to_check = [ALIASES_FOLDER, TRANSE_CHECKPOINT_FOLDER, TEMP_FOLDER, TRANSE_FOLDER, DESCRIPTIONS_NORMALIZED_FOLDER, HELPERS_FOLDER, TRIPLES_FOLDER, RELATIONS_FOLDER,DICTIONARIES_FOLDER, DESCRIPTIONS_FOLDER]
+
+LOG_FOLDER = f"{root}/logs"
+LOG_FOLDER_BUILD_GOLDEN = f"{root}/logs/golden_truth_build"
+
+folders_to_check = [GOLDEN_TRIPLES_FOLDER, LOG_FOLDER_BUILD_GOLDEN, LOG_FOLDER, ALIASES_FOLDER, TRANSE_CHECKPOINT_FOLDER, TEMP_FOLDER, TRANSE_FOLDER, DESCRIPTIONS_NORMALIZED_FOLDER, HELPERS_FOLDER, TRIPLES_FOLDER, RELATIONS_FOLDER,DICTIONARIES_FOLDER, DESCRIPTIONS_FOLDER]
 for fo in folders_to_check:
     if not os.path.exists(fo):
         os.makedirs(fo)
@@ -89,6 +94,15 @@ PKLS_FILES = {
         1_000_000: f"{RELATIONS_FOLDER}/relations_embs_min_1m.pkl"
     },
     
+    "golden_triples": {
+        "full": f"{GOLDEN_TRIPLES_FOLDER}/golden_triples_full.pkl",
+        10: f"{GOLDEN_TRIPLES_FOLDER}/golden_triples_min_10.pkl",
+        100: f"{GOLDEN_TRIPLES_FOLDER}/golden_triples_min_100.pkl",
+        1_000: f"{GOLDEN_TRIPLES_FOLDER}/golden_triples_min_1k.pkl",
+        10_000: f"{GOLDEN_TRIPLES_FOLDER}/golden_triples_min_10k.pkl",
+        1_000_000: f"{GOLDEN_TRIPLES_FOLDER}/golden_triples_min_1m.pkl"
+    },
+    
     "transE_relation_embeddings": f"{TRANSE_FOLDER}/relation_embs.pkl" ,
     "transE_entity_embeddings": f"{TRANSE_FOLDER}/entity_embs.pkl" ,
 
@@ -112,11 +126,15 @@ HELPER_FILES = {
     "keys_not_in_als": f"{HELPERS_FOLDER}/keys_not_in_als.pkl"
 }
 
+LOGGER_FILES = {
+    "build_golden_triples": f"{LOG_FOLDER_BUILD_GOLDEN}/build_golden_triples.log"
+}
+
 def get_min_descriptionsNorm_triples_relations(k):
     min_desc_norm_dict_f = PKLS_FILES["descriptions_normalized"][k]
     min_triples_dict_f = PKLS_FILES["triples"][k]
     min_relations_dict_f = PKLS_FILES["relations"][k]
-    min_aliases_dict_f = PKLS_FILES["aliases_rev_norm"][k]
+    min_aliases_dict_f = PKLS_FILES["aliases"][k]
     
     descs = read_cached_array(min_desc_norm_dict_f)
     triples = read_cached_array(min_triples_dict_f)

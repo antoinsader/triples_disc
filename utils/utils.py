@@ -5,6 +5,7 @@ import random
 import itertools
 import numpy as np
 
+import logging
 
 
 #region pickles
@@ -180,4 +181,31 @@ def load_aliases_dict_from_text(fp):
 
 
 
+
+
+def get_logger(log_name, log_file, append=False):
+    logger = logging.getLogger(log_name)  # Unique logger per block
+    logger.setLevel(logging.INFO)  # Set logging level
+
+    if logger.hasHandlers():
+        logger.handlers.clear()
+    
+    base, ext = os.path.splitext(log_file)
+    idx = 1
+    while True:
+        candidate = f"{base}_{idx}{ext}"
+        if not os.path.exists(candidate):
+            chosen_file = candidate
+            break
+        idx += 1
+    mode = 'a' if append else 'w'
+    
+    handler = logging.FileHandler(chosen_file, mode=mode, encoding='utf-8')
+    fmt = logging.Formatter("%(message)s")
+    handler.setFormatter(fmt)
+    logger.addHandler(handler)
+    
+    logger.info(f"Logging started in {chosen_file!r}")
+    
+    return logger  
 
