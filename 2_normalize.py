@@ -8,6 +8,9 @@ import unicodedata
 
 from utils.utils import batch_dict, read_cached_array, replace_special_chars, cache_array
 from Data import get_compiled_strange_chars, PKLS_FILES
+import nltk
+from nltk.corpus import words
+# nltk.download('words') 
 
 
 def normalize_description_BRASK(sentence):
@@ -21,6 +24,7 @@ def normalize_description_BRASK(sentence):
     """
     sentence = unicodedata.normalize('NFKC', sentence)
     sentence = re.sub(r'\s+', ' ', sentence).strip()
+    
     # sentence = re.sub(r'\([^)]*\)', '', sentence)
     return sentence
 
@@ -31,6 +35,7 @@ def normalize_desc_batch_BRASK(descs_batch):
             descs_batch: a batch of description dictionary 
         does:
             - Replace strange chars in the batch texts
+            -   Remove non-english words
             - Execute normalize_description_BRASK on every sentence in the dictionary
         return: 
             normalized dict 
@@ -38,6 +43,12 @@ def normalize_desc_batch_BRASK(descs_batch):
     compiled_strange_patterns = get_compiled_strange_chars()
     descs_batch = {k:  replace_special_chars(v, compiled_strange_patterns) for k,v in descs_batch.items()}
     
+    
+    valid_word_pattern = re.compile(r"^[A-Za-z0-9.,!?;:'\"()\-]+$")
+    def keep_only_english_chars(text):
+        return ' '.join(word for word in text.split() if valid_word_pattern.match(word))
+    
+    descs_batch = {k: keep_only_english_chars(v) for k,v in descs_batch.items()}
     
     new_dict=  {}
     for desc_id, desc in tqdm(descs_batch.items(), total=len(descs_batch.keys()), desc="Normalizing batch description"):
@@ -78,7 +89,7 @@ def normalize_desc_parallel(descs_all, num_workers = 8):
 
 if __name__ == '__main__':
     k = "full"
-    num_workers = 4
+    num_workers = 1
     descriptions = read_cached_array(PKLS_FILES["descriptions"][k])
     normalized_descs = normalize_desc_parallel(descriptions, num_workers)
     cache_array(normalized_descs, PKLS_FILES["descriptions_normalized"][k])

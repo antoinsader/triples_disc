@@ -6,7 +6,7 @@ import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 
-from Data import PKLS_FILES
+from Data import CHECKPOINT_FILES, PKLS_FILES
 from utils.utils import cache_array, read_cached_array
 import os
 
@@ -207,17 +207,18 @@ def prep_triples(triples_dict):
 
     triples_ar = torch.tensor(n_ar)
     return len(ents), len(rels), triples_ar
-            
+
 if __name__=="__main__":
-    k = 100
-    
+    k = 1000
+
+
     triples_dict = read_cached_array(PKLS_FILES["triples"][k])
-    
+
     n_ents, n_rels, triples =   prep_triples(triples_dict)
     print(f"We have {n_ents} entities, {n_rels} relationships and {triples.shape} triples")
     #I did for k=1_000 num_epochs = 140 and it was nice, for full I did batch_size: 52224, but I did some modifications to laverage big gpu
-    rel_embeddings = train_model(triples, n_ents, n_rels, emb_dim=100, lr=0.001, num_epochs=120, batch_size=24)
+    rel_embeddings = train_model(triples, n_ents, n_rels, emb_dim=100, lr=0.001, num_epochs=120, batch_size=24, checkpoint_path=CHECKPOINT_FILES["transe"])
     print(f"relation embeddings shape: {rel_embeddings.shape}")
     cache_array(rel_embeddings,  PKLS_FILES["transE_relation_embeddings"])
-    
+
 

@@ -105,7 +105,7 @@ def get_rel_embs_opt(relations, relations_full_dict):
 
 
 if __name__ == "__main__": 
-    k = 100
+    k = 1000
     print("reading dictionaries..")
     triples = read_cached_array(PKLS_FILES["triples"][k])
     relations_full_dict  = read_cached_array(PKLS_FILES["relations"]["full"])

@@ -13,6 +13,7 @@ TRANSE_CHECKPOINT_FOLDER = f"{root}/data/transe/checkpoint"
 
 TEMP_FOLDER = f"{root}/data/temp"
 TRANSE_FOLDER = f"{root}/data/transe"
+CHECKPOINTS_FOLDER = f"{root}/data/checkpoints"
 DICTIONARIES_FOLDER = f"{root}/data/dictionaries"
 DESCRIPTIONS_FOLDER = f"{DICTIONARIES_FOLDER}/descriptions"
 DESCRIPTIONS_NORMALIZED_FOLDER = f"{DICTIONARIES_FOLDER}/descriptions_normalized"
@@ -20,12 +21,13 @@ TRIPLES_FOLDER = f"{DICTIONARIES_FOLDER}/triples"
 ALIASES_FOLDER = f"{DICTIONARIES_FOLDER}/aliases"
 RELATIONS_FOLDER = f"{DICTIONARIES_FOLDER}/relations"
 GOLDEN_TRIPLES_FOLDER = f"{DICTIONARIES_FOLDER}/golden_triples"
+SILVER_SPANS_FOLDER = f"{DICTIONARIES_FOLDER}/silver_spans"
 
 
 LOG_FOLDER = f"{root}/logs"
 LOG_FOLDER_BUILD_GOLDEN = f"{root}/logs/golden_truth_build"
 
-folders_to_check = [GOLDEN_TRIPLES_FOLDER, LOG_FOLDER_BUILD_GOLDEN, LOG_FOLDER, ALIASES_FOLDER, TRANSE_CHECKPOINT_FOLDER, TEMP_FOLDER, TRANSE_FOLDER, DESCRIPTIONS_NORMALIZED_FOLDER, HELPERS_FOLDER, TRIPLES_FOLDER, RELATIONS_FOLDER,DICTIONARIES_FOLDER, DESCRIPTIONS_FOLDER]
+folders_to_check = [CHECKPOINTS_FOLDER, SILVER_SPANS_FOLDER, GOLDEN_TRIPLES_FOLDER, LOG_FOLDER_BUILD_GOLDEN, LOG_FOLDER, ALIASES_FOLDER, TRANSE_CHECKPOINT_FOLDER, TEMP_FOLDER, TRANSE_FOLDER, DESCRIPTIONS_NORMALIZED_FOLDER, HELPERS_FOLDER, TRIPLES_FOLDER, RELATIONS_FOLDER,DICTIONARIES_FOLDER, DESCRIPTIONS_FOLDER]
 for fo in folders_to_check:
     if not os.path.exists(fo):
         os.makedirs(fo)
@@ -38,7 +40,7 @@ RAW_TXT_FILES ={
     "triples": f"{RAW_FOLDER}/wikidata5m_transductive_train.txt",
 }
 
-
+THEMODEL_PATH = "BRASK_MODEL.pth"
 
 PKLS_FILES = {
     "descriptions": {
@@ -103,6 +105,14 @@ PKLS_FILES = {
         1_000_000: f"{GOLDEN_TRIPLES_FOLDER}/golden_triples_min_1m.pkl"
     },
     
+    "silver_spans": {
+        "full": f"{GOLDEN_TRIPLES_FOLDER}/silver_spans_full.pkl",
+        10: f"{GOLDEN_TRIPLES_FOLDER}/silver_spans_min_10.pkl",
+        100: f"{GOLDEN_TRIPLES_FOLDER}/silver_spans_min_100.pkl",
+        1_000: f"{GOLDEN_TRIPLES_FOLDER}/silver_spans_min_1k.pkl",
+        10_000: f"{GOLDEN_TRIPLES_FOLDER}/silver_spans_min_10k.pkl",
+        1_000_000: f"{GOLDEN_TRIPLES_FOLDER}/silver_spans_min_1m.pkl"
+    },
     "transE_relation_embeddings": f"{TRANSE_FOLDER}/relation_embs.pkl" ,
     "transE_entity_embeddings": f"{TRANSE_FOLDER}/entity_embs.pkl" ,
 
@@ -124,6 +134,11 @@ TEMP_FILES = {
 HELPER_FILES = {
     "strange_chars": f"{HELPERS_FOLDER}/strange_chars.pkl",
     "keys_not_in_als": f"{HELPERS_FOLDER}/keys_not_in_als.pkl"
+}
+
+CHECKPOINT_FILES = {
+    "transe": f"{CHECKPOINTS_FOLDER}/transE_checkpoint.pth",
+    "brask": f"{CHECKPOINTS_FOLDER}/BRASK_checkpoint.pth"
 }
 
 LOGGER_FILES = {

@@ -8,13 +8,14 @@ from torch.utils.data import Dataset, DataLoader
 
 from transformers import BertModel, BertTokenizer
 import numpy as np 
-import math
+from tqdm import tqdm
 
 
-from Data import PKLS_FILES, TEMP_FILES
+from Data import CHECKPOINT_FILES, PKLS_FILES, TEMP_FILES, THEMODEL_PATH
 from utils.utils import cache_array, read_cached_array
+from utils.model_helpers import get_h_gs, extract_first_embeddings,extract_last_idxs, extract_triples,  merge_triples
 import random
-
+import os
 
 seed = 42
 torch.manual_seed(seed)
@@ -32,201 +33,35 @@ if torch.cuda.is_available():
 
 
 
-def get_h_gs(sentences, tokenizer, model, max_length):
-    encoded = tokenizer(sentences, padding=True, truncation=True, return_tensors="pt", max_length=max_length)
-    input_ids = encoded['input_ids']
-    attention_mask = encoded['attention_mask']
-    
-    with torch.no_grad():
-        bert_output = model(input_ids=input_ids, attention_mask=attention_mask)
-        embeddings = bert_output.last_hidden_state # (batch_size, seq_len ,hidden_size)
-
-    mask_expanded = attention_mask.unsqueeze(-1).expand(embeddings.size())
-
-    masked_embeddings = embeddings * mask_expanded
-
-    sum_embeddings = masked_embeddings.sum(dim=1)  # [batch, hidden_size]
-    token_counts = mask_expanded.sum(dim=1)  # [batch, 1]
-    token_counts = token_counts.clamp(min=1)
-    return sum_embeddings / token_counts, embeddings
-
-
-
-def extract_first_embeddings(token_embs, start_probs, end_probs, max_len, threshold=.6):
-    """
-        args:
-            token_embs: sentence embeddings with shape (batch_size, seq_length, hidden_size)
-            start_probs: probabilities that an entity is a start (start of subject for forward, start of object for backward) with shape (batch_size, seq_len)
-            end_probs: probabilities that an entity is an end (end of subject for forward, end of object for backward) with shape (batch_size, seq_len)
-            threshold: threshold that if the probability > threshold, then it is considered start or end of starting entity
-        returns:
-            padded_embs: these are padded embeddings of all subjects or objects with shape (B, max_ents, H)
-            mask_embs: mask to show the padded embs (0 for padding)
-            start_idxs:  list (len=batch_size) where each item is a list of tuples, each tuple (start_idx, end_idx) of the entities
-    """
-    batch_size, seq_len, hidden_size = token_embs.shape
-
-    start_mask = start_probs > threshold
-    end_mask = end_probs > threshold
-
-    start_idxs = []
-    all_ents_embs = []
-    all_masks = []
-
-    for sent_idx in range(batch_size):
-        start_indices = torch.nonzero(start_mask[sent_idx], as_tuple=False).squeeze(-1)
-        end_indices = torch.nonzero(end_mask[sent_idx], as_tuple=False).squeeze(-1)
-
-        ents_embs = []
-        idxs_sentence = []
-        used_ends = set()
-
-        for start_idx in start_indices.tolist():
-            candidates = [end_idx for end_idx in end_indices.tolist() if end_idx >= start_idx and end_idx not in used_ends]
-            if candidates:
-                end_idx = candidates[0]
-                used_ends.add(end_idx)
-                idxs_sentence.append((start_idx, end_idx))
-
-                # Compute average embedding
-                ent_emb = (token_embs[sent_idx, start_idx] + token_embs[sent_idx, end_idx]) / 2.0
-                ents_embs.append(ent_emb)
-
-        start_idxs.append(idxs_sentence)
-
-        if ents_embs:
-            ent_tensor = torch.stack(ents_embs)
-            all_ents_embs.append(ent_tensor)
-            all_masks.append(torch.ones(ent_tensor.size(0), dtype=torch.bool, device=token_embs.device))
-        else:
-            all_ents_embs.append(torch.empty(0, hidden_size, device=token_embs.device))
-            all_masks.append(torch.zeros(0, dtype=torch.bool, device=token_embs.device))
-
-    # Pad sequences
-    padded_embs = pad_sequence(all_ents_embs, batch_first=True, padding_value=0.0)
-    mask_embs = pad_sequence(all_masks, batch_first=True, padding_value=False)
-
-    if max_len is not None:
-        # Pad or truncate embeddings
-        curr_len = padded_embs.size(1)
-        if curr_len < max_len:
-            pad_size = max_len - curr_len
-            padding = torch.zeros(padded_embs.size(0), pad_size, padded_embs.size(2), device=padded_embs.device)
-            padded_embs = torch.cat([padded_embs, padding], dim=1)
-
-            mask_padding = torch.zeros(mask_embs.size(0), pad_size, dtype=torch.bool, device=mask_embs.device)
-            mask_embs = torch.cat([mask_embs, mask_padding], dim=1)
-
-        elif curr_len > max_len:
-            padded_embs = padded_embs[:, :max_len, :]
-            mask_embs = mask_embs[:, :max_len]
-
-    return padded_embs, mask_embs, start_idxs
-
-def extract_last_idxs(start_probs, end_probs, threshold):
-    """
-      args:
-        start_probs, end_probs are vectors with length of L, those are for one sentence 
-      returns:
-        idxs: a list where each item contains (start_idx, end_idx) of entities in the sentence
-    """
-    start_idxs = torch.nonzero(start_probs > threshold).squeeze()
-    end_idxs = torch.nonzero(end_probs > threshold).squeeze()
-    
-    if start_idxs.ndim == 0:
-        start_idxs = start_idxs.unsqueeze(0)
-    if end_idxs.ndim == 0:
-        end_idxs = end_idxs.unsqueeze(0)
-
-    idxs = []
-    used_ends = set()
-    
-    for start_idx in start_idxs.tolist():
-        for end_idx in end_idxs.tolist():
-            if end_idx >= start_idx and end_idx not in used_ends:
-                idxs.append((start_idx, end_idx))
-                used_ends.add(end_idx)
-                break
-            
-    return idxs 
-  
-
-
-def extract_triples(first_idxs, start_probs, end_probs,is_forward, threshold=.6):
-    """
-        args:
-            first_idxs list with len = B, each one is list of indexes for the starting entities. List sentence-1[(start_ent_start_idx, start_ent_end_idx ), ...]
-            start_probs, end_probs with shape (B, L, R)
-        does:
-          loop through sentences in the batch
-          for each relationship: find objects that has high probability to make (rel, obj)
-          assign those to each subject to have (sub, rel, obj)
-          (I am saying sub,rel,obj but in backward it would be obj,rel,sub)
-        
-        returns:
-          batch_triples: which is a list with size of B and each item is a list having the triples
-          
-
-    """
-    batch_size, seq_len, num_rels = start_probs.shape
-    batch_triples  = []
-    
-    for b in range(batch_size):
-        sentence_triples = []
-        sentence_first_idxs = first_idxs[b]
-        
-        for rel in range(num_rels):
-            last_start_vec = start_probs[b, :, rel]
-            last_end_vec = end_probs[b, :, rel]
-            last_idxs = extract_last_idxs(last_start_vec, last_end_vec, threshold)
-            
-            for first_idx in sentence_first_idxs:
-                for last_idx in last_idxs:
-                    # if is forward:
-                    #     subject_end_idx should be < obj_start_idx 
-                    # if backward:
-                    #     obj_start_idx > subject_end_idx
-                    if (is_forward and first_idx[1] < last_idx[0]) or (not is_forward and first_idx[0] > last_idx[1]):
-                      sentence_triples.append((first_idx,rel ,last_idx))
-        batch_triples.append(sentence_triples)
-    
-    return batch_triples    
-        
-
-
-def merge_triples(forward_triples, backward_triples):
-  """
-    args:
-      forwarD_triples: List (len=batch_size ? ) of items, each item is a triple (head_idx, rel_idx, obj_idx)  
-      backward_triples: List (len=batch_size ? ) of items, each item is a triple (head_idx, rel_idx, obj_idx)  
-    returns:
-      list of triples (length=batch_size) and each item is  a triple (h,r,t)  
-    
-  """
-  final_triples = []
-  for f_triples, b_triples in zip(forward_triples, backward_triples):
-    final = list(set(f_triples).intersection(set(b_triples)))
-    final_triples.append(final)
-  return final_triples
-
-
-
-
 class BRASKDataSet(Dataset):
-    def __init__(self, descriptions_dict , desc_max_length=128):
-        if descriptions_dict is not None:
+    def __init__(self, descriptions_dict, silver_spans , desc_max_length=128):
+        #silver_spans should be dictionary having keys head_start, head_end, tail_start, tail_end, each one is tensor with shape (B, seq_len) 
+        valid = (len(descriptions_dict), desc_max_length) == silver_spans["head_start"].shape == silver_spans["head_end"].shape == silver_spans["tail_start"].shape==silver_spans["tail_end"].shape 
+        
+        if valid:
             
             tokenizer =BertTokenizer.from_pretrained('bert-base-cased')
             model = BertModel.from_pretrained('bert-base-cased')
 
             sentences = list(descriptions_dict.values())
+            print("creating h_gs")
             self.h_gs, self.embs = get_h_gs(sentences, tokenizer, model, max_length=desc_max_length  )  #  h_gs (batch_size, hidden_size), embs (batch_size, seq_len, hidden_size)
-            
-            
+            print("")
             print(f"self embs shape: {self.embs.shape}")
-            
+            self.labels_head_start, self.labels_head_end, self.labels_tail_start, self.labels_tail_end =  silver_spans["head_start"], silver_spans["head_end"], silver_spans["tail_start"], silver_spans["tail_end"] 
+
     def __getitem__(self,idx):
-        return  {"h_gs": self.h_gs[idx], "embs": self.embs[idx] }
+        return  {
+            "h_gs": self.h_gs[idx], 
+            "embs": self.embs[idx],
+            "labels_head_start": self.labels_head_start[idx] ,
+            "labels_head_end": self.labels_head_end[idx],
+            "labels_tail_start": self.labels_tail_start[idx],
+            "labels_tail_end": self.labels_tail_end[idx],
+
+        }
+
+
     def __len__(self):
         return self.h_gs.shape[0]
     
@@ -234,6 +69,11 @@ class BRASKDataSet(Dataset):
         di = {
             "h_gs": self.h_gs.cpu(),
             "embs": self.embs.cpu(),
+            "labels_head_start": self.labels_head_start.cpu() ,
+            "labels_head_end": self.labels_head_end.cpu(),
+            "labels_tail_start":  self.labels_tail_start.cpu(),
+            "labels_tail_end":  self.labels_tail_end.cpu(),
+            
         }
         cache_array(di, path)
     @classmethod
@@ -246,6 +86,10 @@ class BRASKDataSet(Dataset):
         print(f"\t dataset.h_gs.shape: {dataset.h_gs.shape}")
         dataset.embs = data["embs"]
         print(f"\t dataset.embs.shape: {dataset.embs.shape}")
+        dataset.labels_head_start = data["labels_head_start"]
+        dataset.labels_head_end = data["labels_head_end"]
+        dataset.labels_tail_start = data["labels_tail_start"]
+        dataset.labels_tail_end = data["labels_tail_end"]
         
         return dataset
 class BRASKModel(nn.Module):
@@ -336,7 +180,6 @@ class BRASKModel(nn.Module):
         #forward
         f_sub_start_probs = self.sigmoid(self.f_start_sub_fc(token_embs)).squeeze(-1) # (b, l)
         f_sub_end_probs = self.sigmoid(self.f_end_sub_fc(token_embs)).squeeze(-1) 
-
         #backward
         b_obj_start_probs = self.sigmoid(self.b_start_obj_fc(token_embs)).squeeze(-1)
         b_obj_end_probs = self.sigmoid(self.b_end_obj_fc(token_embs)).squeeze(-1) # (b,l)
@@ -353,6 +196,8 @@ class BRASKModel(nn.Module):
 
         b_padded_obj_embs, b_mask_obj_embs, b_obj_idxs = extract_first_embeddings(
             token_embs, b_obj_start_probs, b_obj_end_probs, seq_len, threshold=self.b_obj_threshold) # b_padded_obj_embs has shape (B, L, H)
+
+
 
         # f_s_w is Wsf(S_k) for forwad (all subject embeddings weighted), 
         # b_o_w is Wsb(O_k) for backward (all objet embeddings weighted), 
@@ -441,16 +286,65 @@ class BRASKModel(nn.Module):
         forward_triples  = extract_triples(f_subj_idxs, f_obj_start_probs, f_obj_end_probs,  True , threshold=self.f_obj_threshold )
         backward_triples = extract_triples(b_obj_idxs, b_sub_start_probs, b_sub_end_probs,  False, threshold=self.b_subj_threshold)
         
-        print(f"len forward triples:  {len(forward_triples)}, first item in forward triple len: {len(forward_triples[0])} and first item: {forward_triples[0]}")
-        print(f"len backward triples:  {len(backward_triples)}, first item in backward  triple len: {len(backward_triples[0])} and first item: {backward_triples[0]}")
-
-
+        # predicted_triples = merge_triples(forward_triples, backward_triples)
         
-        print("****************")
+        
 
-        return forward_triples, backward_triples
+        return {
+            "forward": {
+                "sub_s": f_sub_start_probs, 
+                "sub_e": f_sub_end_probs, 
+                "obj_s": f_obj_start_probs, 
+                "obj_e": f_obj_end_probs, 
+            },
+            "backward": {
+                "obj_s": b_obj_start_probs, 
+                "obj_e": b_obj_end_probs, 
+                "sub_s": b_sub_start_probs, 
+                "sub_e": b_sub_end_probs, 
+            },
+            # "predicted_triples": predicted_triples
+        }
 
-def train_model(dataset,k,thresholds, transE_emb_dim=100, batch_size=128, num_workers=8, learning_rate=0.001, num_epochs=1000, device="cpu"):
+def compute_loss(out, batch):
+    bce = nn.BCEWithLogitsLoss()
+    loss = 0
+    loss += bce(out["forward"]["sub_s"], batch["labels_head_start"])
+    loss += bce(out["forward"]["sub_e"], batch["labels_head_end"])
+    loss += bce(out["forward"]["obj_s"], batch["labels_tail_start"])
+    loss += bce(out["forward"]["obj_e"], batch["labels_tail_end"])
+
+    loss += bce(out["backward"]["obj_s"], batch["labels_tail_start"])
+    loss += bce(out["backward"]["obj_e"], batch["labels_tail_end"])
+    loss += bce(out["backward"]["sub_s"], batch["labels_head_start"])
+    loss += bce(out["backward"]["sub_e"], batch["labels_head_end"])
+    return loss
+
+
+def save_checkpoint(model, optimizer, epoch, last_total_loss, filename="checkpoint.pth"):
+    checkpoint = {
+       "epoch": epoch,
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "last_total_loss": last_total_loss
+    }
+    torch.save(checkpoint, filename)
+    
+def load_checkpoint(model, optimizer, filename="checkpoint.pth"):
+    if os.path.exists(filename):
+        checkpoint = torch.load(filename)
+        model.load_state_dict(checkpoint["model_state_dict"])
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        start_epoch = checkpoint["epoch"] + 1
+        last_total_loss = checkpoint["last_total_loss"]
+        print(f"Resumed from epoch {start_epoch} with loss {last_total_loss:.4f}")
+        return start_epoch, last_total_loss
+    else:
+        return 0, 0.0
+    
+    
+
+def train_model(dataset,k,thresholds,checkpoint_path, transE_emb_dim=100, batch_size=128, num_workers=8, learning_rate=1e-5, num_epochs=1000, device="cpu", ):
     print("loading dataloader..")
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True,
                         num_workers=num_workers, pin_memory=True)
@@ -458,31 +352,44 @@ def train_model(dataset,k,thresholds, transE_emb_dim=100, batch_size=128, num_wo
     relations_embs = read_cached_array(PKLS_FILES["relations_embs"][k])
     relations_embs_transE = read_cached_array(PKLS_FILES["transE_relation_embeddings"])
 
+    
 
     
     ###### REMEMBER TO MAKE IT torch.compile  in production
     print("creating model..")
     model = torch.compile(BRASKModel(relations_embs, relations_embs_transE, transE_emb_dim=transE_emb_dim, thresholds=thresholds,device=device))
     model.to(device)
-
-    # optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-    # start_epoch, last_total_loss = load_checkpoint(model, optimizer, filename=checkpoint_path)
+    optimizer = optim.Adam(model.parameters(),  lr=learning_rate )
+    start_epoch, last_total_loss = load_checkpoint(model, optimizer, filename=checkpoint_path)
     
     print("starting epochs loop")
-    for epoch in range(num_epochs):
-        total_loss = 0 
-        for ds_batch in dataloader:
-            ds_batch = {key: value.to(device) for key, value in ds_batch.items()}
-            forward_triples, backward_triples = model(ds_batch)
-            break
+    with tqdm(range(start_epoch - 1, num_epochs), desc="Training Epochs", total=(num_epochs-start_epoch - 1)) as pbar_epoch:
+        for epoch in pbar_epoch:
+            total_loss = last_total_loss 
+            last_loss = 0.0
+            batch_count = 0
+            for ds_batch in tqdm(dataloader, desc=f"Epoch {epoch+1}", leave=False):
+                ds_batch = {key: value.to(device) for key, value in ds_batch.items()}
+                out = model(ds_batch)
+                loss = compute_loss(out, ds_batch)
+                
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                
+                last_loss = loss.item()
+                total_loss += last_loss
+                batch_count += 1
 
-        break
-    return [], []
-
-
+            avg_loss = total_loss / batch_count if batch_count > 0 else 0.0
+            pbar_epoch.set_postfix(epoch=epoch+1, avg_loss=f"{avg_loss:.4f}",last_loss=last_loss )
+            save_checkpoint(model, optimizer, epoch, total_loss, filename=checkpoint_path)
+            
+            
+    return model
 
 if __name__ == "__main__":
-    k = 100 
+    k = 1000 
     transE_emb_dim = 100
     batch_size = 256
     num_workers = 8
@@ -492,7 +399,7 @@ if __name__ == "__main__":
     thresholds = [.5,.5,.5,.5]
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
+    checkpoint_file = CHECKPOINT_FILES["brask"]
     
 
     use_cached_ds = False
@@ -504,13 +411,14 @@ if __name__ == "__main__":
     else:
         print("reading dictionaries...")
         descriptions_dict = read_cached_array(PKLS_FILES["descriptions_normalized"][k])
-        y_triples = read_cached_array(PKLS_FILES["triples"][k])
-        
+        silver_spans  = read_cached_array(PKLS_FILES["silver_spans"][k])
         print("creating ds")
-        dataset = BRASKDataSet(descriptions_dict)
+        dataset = BRASKDataSet(descriptions_dict,silver_spans )
         dataset.save(TEMP_FILES["dataset"][k])
 
-    # forward_triples, backward_triples = train_model(dataset, k, transE_emb_dim=transE_emb_dim, batch_size=batch_size,
-    #                                                 num_workers=num_workers, learning_rate=learning_rate, 
-    #                                                 num_epochs=num_epochs, thresholds=thresholds, 
-    #                                                 device=device)
+    model = train_model(
+            dataset, k, transE_emb_dim=transE_emb_dim, batch_size=batch_size,
+                            num_workers=num_workers, learning_rate=learning_rate, 
+                            num_epochs=num_epochs, thresholds=thresholds, 
+                            device=device, checkpoint_path=checkpoint_file)
+    torch.save(model.state_dict(), THEMODEL_PATH)
