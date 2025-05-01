@@ -321,10 +321,10 @@ if __name__ == '__main__':
     
     
     #do create min only after normalization for all descriptions using 2_normalize, be careful that you need to be them 1,2,3,4,5. Doing create_min is creating memory error
-    k = 1000
+    k = 100
     # create_min_1(k)
     # create_min_2(k)
     # create_min_3(k)
-    # create_min_4(k)
+    create_min_4(k)
     create_min_5(k)
     

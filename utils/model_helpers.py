@@ -1,17 +1,47 @@
 
 import torch
-import torch.nn as nn
-import torch.optim as optim
-import torch.nn.functional as F
 from torch.nn.utils.rnn import pad_sequence
 
-from torch.utils.data import Dataset, DataLoader
+#greattttttttt approach for optimization
+def get_h_gs_opt(sentences, tokenizer, model, max_length, device, num_workers):
+    print(f"tokenizing ")
+    dataset = HFDataset.from_dict({"text": sentences})
+    def tokenize_function(batch):
+        return tokenizer(
+            batch["text"],
+            padding="max_length",
+            truncation=True,
+            return_tensors="pt",
+            max_length=max_length
+        )
+    encoded = dataset.map(
+        tokenize_function,
+        batched=True,
+        num_proc=num_workers
+    )
+    input_ids = torch.tensor(encoded['input_ids']).to(device)
+    attention_mask = torch.tensor(encoded['attention_mask']).to(device)
 
-from transformers import BertModel, BertTokenizer
+    
+    print(f"after tokenizing ")
+    with torch.no_grad():
+        bert_output = model(input_ids=input_ids, attention_mask=attention_mask)
+        embeddings = bert_output.last_hidden_state # (batch_size, seq_len ,hidden_size)
+
+
+    attention_mask = attention_mask.unsqueeze(-1)  # (batch_size, seq_len, 1)
+
+    # Sum only valid token embeddings
+    sum_embeddings = (embeddings * attention_mask).sum(dim=1)
+    token_counts = attention_mask.sum(dim=1).clamp(min=1)
+
+    mean_embeddings = sum_embeddings / token_counts
+
+    return mean_embeddings, embeddings
 
 
 def get_h_gs(sentences, tokenizer, model, max_length):
-    encoded = tokenizer(sentences, padding=True, truncation=True, return_tensors="pt", max_length=max_length)
+    encoded = tokenizer(sentences, padding="max_length", truncation=True, return_tensors="pt", max_length=max_length)
     input_ids = encoded['input_ids']
     attention_mask = encoded['attention_mask']
     

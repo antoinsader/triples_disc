@@ -2,6 +2,10 @@ from transformers import BertModel, BertTokenizer
 import torch 
 from Data import PKLS_FILES
 from utils.utils import read_cached_array, cache_array
+from torch.utils.data import Dataset, DataLoader
+from tqdm import tqdm
+
+
 
 def extract_relations(triples):
     """
@@ -104,7 +108,47 @@ def get_rel_embs_opt(relations, relations_full_dict):
     return all_rels_embs
 
 
-if __name__ == "__main__": 
+
+
+
+class RelAliasDataset(Dataset):
+    def __init__(self, relations_full_dict):
+        self.pairs = [(rel, alias) 
+                      for rel, aliases in relations_full_dict.items() 
+                      for alias in aliases]
+    def __len__(self): return len(self.pairs)
+    def __getitem__(self, idx): return self.pairs[idx]
+
+def get_rel_embs_opt_2(rel_loader,  bert_model, relations):
+    emb_dict = {}
+    
+    with torch.no_grad():
+        for rel_ids, inputs in tqdm(rel_loader, total=len(rel_loader), desc="extracting relations"):
+            inputs = {k: v for k,v in inputs.items()}
+            with torch.cuda.amp.autocast():
+                outs = bert_model(**inputs, output_hidden_states=True).hidden_states
+            avg_layers = (outs[-1] + outs[-2]) / 2
+            mask = inputs['attention_mask'].unsqueeze(-1)
+            emb = (avg_layers * mask).sum(1) / mask.sum(1)
+            for rel_id, vec in zip(rel_ids, emb):
+                emb_dict.setdefault(rel_id, []).append(vec.cpu())
+
+    # Final per-relation embeddings
+    all_rels_embs = [torch.stack(emb_dict[rel_id]).mean(0)
+                    for rel_id in relations]
+
+    return all_rels_embs
+
+
+def collate_fn(batch, bert_tokenizer):
+    rel_ids, aliases = zip(*batch)
+    enc = bert_tokenizer(list(aliases), padding=True, truncation=True, return_tensors='pt')
+    return rel_ids, enc
+    
+
+
+
+def main_cpu():
     k = 1000
     print("reading dictionaries..")
     triples = read_cached_array(PKLS_FILES["triples"][k])
@@ -117,4 +161,36 @@ if __name__ == "__main__":
     print(f" len(rel_embs_opt): {len(rel_embs_opt)}, shape[0]: {rel_embs_opt[0].shape}")
     rel_embs = torch.stack(rel_embs_opt, dim=0)
     cache_array(rel_embs, PKLS_FILES["relations_embs"][k] )
+
+
+def main_gpu():
+    k=10
+    
+    
+    bert_tokenizer = BertTokenizer.from_pretrained('bert-base-cased')
+    bert_model = BertModel.from_pretrained('bert-base-cased').half()
+    print("reading dictionaries..")
+    triples = read_cached_array(PKLS_FILES["triples"][k])
+    relations_full_dict  = read_cached_array(PKLS_FILES["relations"]["full"])
+    relations = extract_relations(triples)
+    
+    print("finished reading")
+    
+
+    print("creating data loader")
+    rel_loader = DataLoader(
+        RelAliasDataset(relations_full_dict),
+        batch_size=32,
+        collate_fn=lambda batch: collate_fn(batch, bert_tokenizer),
+        num_workers=48,  # parallel tokenization
+        drop_last=False
+    )
+    print("finished creating data loader")
+    
+    rel_embs = get_rel_embs_opt_2(rel_loader, bert_model, relations )
+    cache_array(rel_embs, PKLS_FILES["relations_embs"][k] )
+    
+    
+if __name__ == "__main__": 
+    main_cpu()
     

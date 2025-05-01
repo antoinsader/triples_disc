@@ -7,6 +7,10 @@ import numpy as np
 
 import logging
 
+import torch
+import os
+import numpy as np 
+
 
 #region pickles
 def cache_array(ar, filename):
@@ -18,6 +22,21 @@ def cache_array(ar, filename):
 def read_cached_array(filename):
     with open(filename, 'rb') as f:
         return pickle.load(f)
+    
+
+
+def save_tensor(tensor, path):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    np.savez_compressed(path  , arr= tensor.cpu().numpy() )
+    print(f"Saved tensor → {path}")
+
+
+def load_tensor(path, device=None):
+    data = np.load(path)["arr"]
+    tensor = torch.from_numpy(data)
+    if device is not None:
+        tensor = tensor.to(device)
+    return tensor
 #endregion
 
 #region loaders 

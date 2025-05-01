@@ -57,11 +57,20 @@ PKLS_FILES = {
         100: f"{DESCRIPTIONS_NORMALIZED_FOLDER}/descriptions_min_100.pkl",
         1_000: f"{DESCRIPTIONS_NORMALIZED_FOLDER}/descriptions_min_1k.pkl",
         10_000: f"{DESCRIPTIONS_NORMALIZED_FOLDER}/descriptions_min_10k.pkl",
-        1_000_000: f"{DESCRIPTIONS_NORMALIZED_FOLDER}/descriptions_min_1m.pkl"
+        1_000_000: f"{DESCRIPTIONS_NORMALIZED_FOLDER}/descriptions_min_1m.pkl",
+    },
+    "descriptions_tokenized": {
+        "full_input_ids": f"{DESCRIPTIONS_NORMALIZED_FOLDER}/descriptions_full_input_ids.pkl",
+        "full_attention_mask": f"{DESCRIPTIONS_NORMALIZED_FOLDER}/descriptions_full_attention_masks.pkl",
+        "sentence_tokens": f"{DESCRIPTIONS_NORMALIZED_FOLDER}/descriptions_full_sentence_tokens.pkl",
+        "aliases_tokenized": f"{DESCRIPTIONS_NORMALIZED_FOLDER}/aliases_tokenized.pkl"
+        
+        
     },
     "aliases_dict": f"{DICTIONARIES_FOLDER}/aliases_dict.pkl",
     "aliases_rev": f"{DICTIONARIES_FOLDER}/aliases_rev.pkl",
     "aliases_rev_norm": f"{DICTIONARIES_FOLDER}/aliases_rev_norm.pkl",
+    #This is aliases with keys as query_id and value is a list (it should be named aliases_dict)
     "aliases":{
         "full": f"{ALIASES_FOLDER}/aliases_full.pkl",
         10: f"{ALIASES_FOLDER}/aliases_min_10.pkl",
@@ -115,8 +124,13 @@ PKLS_FILES = {
     },
     "transE_relation_embeddings": f"{TRANSE_FOLDER}/relation_embs.pkl" ,
     "transE_entity_embeddings": f"{TRANSE_FOLDER}/entity_embs.pkl" ,
-
-
+    "ss_triples_head_aliases": f"{GOLDEN_TRIPLES_FOLDER}/head_aliases.pkl",
+    "ss_triples_tail_aliases": f"{GOLDEN_TRIPLES_FOLDER}/tail_aliases.pkl",
+    "alias_pattern_map": f"{GOLDEN_TRIPLES_FOLDER}/alias_patterns_map.pkl",
+    "encoded_tokenization": f"{DICTIONARIES_FOLDER}/encoded_tokenization.pkl",
+    "h_g_s_all_means": f"{DICTIONARIES_FOLDER}/h_g_s_all_means.pt",
+    "h_g_s_all_embs": f"{DICTIONARIES_FOLDER}/h_g_s_all_embs.pt",
+    
 }
 
 

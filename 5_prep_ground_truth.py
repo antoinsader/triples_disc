@@ -1,117 +1,195 @@
-from Data import get_min_descriptionsNorm_triples_relations, LOGGER_FILES, PKLS_FILES
-from utils.utils import read_cached_array, cache_array, get_logger
-from transformers import BertTokenizerFast
-from flashtext import KeywordProcessor
-from transformers import BertModel
+
+from Data import get_min_descriptionsNorm_triples_relations,  PKLS_FILES
+from utils.utils import read_cached_array, cache_array
+
 import torch
+from transformers import BertTokenizerFast
 
+from math import ceil
+from tqdm import tqdm
+import re 
 
-DESCRIPTION_MAX_LENGTH = 128
-
-
-
-def get_entity_start_end_idxs(entity_description_tokens, entity_to_find_aliases, tokenizer):
-    """
-        I try to find using flashtext the entity to find in the description, if found return the idxs 
-    """ 
-    spans = []
-    alias_token_lists = []
-    for alias in entity_to_find_aliases:
-        toks = tokenizer.tokenize(alias)
-        alias_token_lists.append((toks, alias))
-    
-    L = len(entity_description_tokens)
-    for toks, alias in alias_token_lists:
-        m = len(toks)
-        if m == 0 or m > L:
-            continue
-        for i in range(0, L - m + 1):
-            if entity_description_tokens[i : i + m] == toks:
-                spans.append((i, i + m - 1, alias))
-    return spans
-
-def create_silver_spans(descs, triples, relations, aliases, buid_logger,golden_triples_file, silver_spans_file):
+def extract_silver_spans(descs, triples, aliases):
+    CHUNK_SIZE= int(1000/20)
+    L = DESCRIPTION_MAX_LENGTH = 128
+    BATCH_SIZE = len(descs)
+    print("\t preparing for extraction")
     tokenizer = BertTokenizerFast.from_pretrained('bert-base-cased')
-
-
     sentences_ids = list(descs.keys())
-    sentences = list(descs.values())
-    encoded = tokenizer(sentences, padding=True, truncation=True, return_tensors="pt", max_length=DESCRIPTION_MAX_LENGTH)
-    sentences_tokens = [tokenizer.convert_ids_to_tokens(sen) for sen in encoded["input_ids"]]
-    seq_len = len(sentences_tokens[0])
-    batch_size = len(sentences)
+    sentences_texts = list(descs.values())
+    
+    sentences_triples_heads_aliases = [
+        [aliases[t[0]] for t in triples[s]] 
+        for s in sentences_ids
+    ]
+    sentences_triples_tails_aliases = [
+        [aliases[t[2]] for t in triples[s]] 
+        for s in sentences_ids
+    ]
 
-    silver_span_sub_s = torch.zeros(batch_size, seq_len)
-    silver_span_sub_e = torch.zeros(batch_size, seq_len)
-    silver_span_obj_s = torch.zeros(batch_size, seq_len)
-    silver_span_obj_e = torch.zeros(batch_size, seq_len)
+    print("\t doing compiled patterns for aliases ")
+        
+    alias_pattern_map = {} 
+    for lst in tqdm(aliases.values(), total=len(aliases), desc="creating compiled patterns "):
+        for alias in lst:
+            escaped = re.escape(alias)
+            flexible  = escaped.replace(r"\ ", r"\s*")
+            pattern   = rf"\b{flexible}\b"
+            alias_pattern_map[alias] = re.compile(pattern, re.IGNORECASE)
 
-    golden_triples = {}
-    buid_logger.info(f"Building golden triples for {len(descs)}: \n We will log every description sentence and then the aliases for the head, tail of the description triples and log the extracted golden triples.. By triples I mean double of (head, tail)")
 
-    for sentence_idx, (sen_tokens, sen_id) in enumerate(zip(sentences_tokens, sentences_ids)):
-        buid_logger.info(f"\n\nSentence : {descs[sen_id]}")
-        buid_logger.info(f"Sentence tokens: {sen_tokens}")
-        #I should allow duplications because the network might predict duplicated 
-        sen_trps = []
-        trpls = triples[sen_id]
-        triples_found_logs = []
-        for h, r, t in trpls:
-            buid_logger.info(f"\n\t next triple: ")
-            h_aliases = aliases[h]
-            buid_logger.info(f"\thead aliases: {h_aliases}")
-            trp_h = get_entity_start_end_idxs(sen_tokens, h_aliases, tokenizer)
-            if len(trp_h) == 0:
-                buid_logger.info(f"\t \t no head aliases matched with the sentence")
-                continue
-            buid_logger.info(f"\t \thead aliases matched {trp_h}")
+    print("\t creating empty tensors")
+    
+    silver_span_head_s = torch.zeros(BATCH_SIZE, L )
+    silver_span_head_e = torch.zeros(BATCH_SIZE, L )
+    silver_span_tail_s = torch.zeros(BATCH_SIZE, L )
+    silver_span_tail_e = torch.zeros(BATCH_SIZE, L )
 
-            t_aliases = aliases[t]
-            buid_logger.info(f"\ttail aliases: {t_aliases}")
-            trp_t = get_entity_start_end_idxs(sen_tokens, t_aliases, tokenizer)
+    all_sentences_tokens = []
+    all_sentences_offsets = []
 
-            if len(trp_t) == 0:
-                buid_logger.info(f"\t \tno tail aliases matched with the sentence")
-                continue 
-            buid_logger.info(f"\t \ttail aliases matched {trp_t}")
+    print("\t starting creating")
+    total_batches = ceil(len(sentences_texts) / CHUNK_SIZE)
+    for i in tqdm(
+        range(0, len(sentences_texts), CHUNK_SIZE),
+        total=total_batches,
+        desc="Tokenizing batches",
+        unit="batch"
+    ):
 
-            relation_aliases = relations[r]
-            for matched_head in trp_h:
-                for matched_tail in trp_t:
+        batch = sentences_texts[i : i + CHUNK_SIZE]
+        enc = tokenizer(
+            batch, 
+            return_offsets_mapping=True,
+            add_special_tokens = False,
+            padding="max_length", 
+            truncation=True,
+            max_length=DESCRIPTION_MAX_LENGTH
+            
+        )
+        all_sentences_offsets.extend(enc.offset_mapping)
+
+        for sen_idx, enc_obj in enumerate(enc.encodings):
+            all_sentences_tokens.append(enc_obj.tokens)
+
+            sentence_idx_in_batch = i + sen_idx
+            current_description = sentences_texts[sentence_idx_in_batch]
+            sentence_heads_aliases = sentences_triples_heads_aliases[sentence_idx_in_batch]
+            sentence_tails_aliases = sentences_triples_tails_aliases[sentence_idx_in_batch]
+            sentence_tokens_offset = all_sentences_offsets[sentence_idx_in_batch]
+
+            for one_als_list in sentence_heads_aliases:
+                for als_str in one_als_list:
+                    pattern = alias_pattern_map[als_str]
+                    m = pattern.search(current_description)
+                    if not m: continue 
+                    start_char, end_char = m.span()
+                    token_indices = [
+                        i for i, (s, e) in enumerate(sentence_tokens_offset)
+                        if (s < end_char) and (e > start_char)
+                    ]
+                    if len(token_indices) > 0:
+                        head_start, head_end = token_indices[0], token_indices[-1]
+                        silver_span_head_s[sentence_idx_in_batch, head_start] = 1
+                        silver_span_head_e[sentence_idx_in_batch, head_end] = 1
+                        break
+
+            for one_als_list in sentence_tails_aliases:
+                for als_str in one_als_list:
+                    pattern =  alias_pattern_map[als_str]
                     
-                    silver_span_sub_s[sentence_idx, matched_head[0]] = 1.0 
-                    silver_span_sub_e[sentence_idx, matched_head[1]] = 1.0 
-                    silver_span_obj_s[sentence_idx, matched_tail[0]] = 1.0 
-                    silver_span_obj_e[sentence_idx, matched_tail[1]] = 1.0 
+                    m = pattern.search(current_description)
+                    if not m: continue 
+                    start_char, end_char = m.span()
+                    token_indices = [
+                        i for i, (s, e) in enumerate(sentence_tokens_offset)
+                        if (s < end_char) and (e > start_char)
+                    ]
+                    if len(token_indices) > 0 :
+                        tail_start, tail_end = token_indices[0], token_indices[-1]
+                        silver_span_tail_s[sentence_idx_in_batch, tail_start] = 1
+                        silver_span_tail_e[sentence_idx_in_batch, tail_end] = 1
+                        break
+    print("\t finsihed ")
+    return  silver_span_head_s, silver_span_head_e,  silver_span_tail_s,silver_span_tail_e, all_sentences_tokens
 
-                    sen_trps.append(( (matched_head[0], matched_head[1]) ,  (matched_tail[0], matched_tail[1])  ))
-                    triples_found_logs.append(f"\n\n\t******** TRIPLE FOUND:  (HEAD, TAIL): ({matched_head[2]}, {matched_tail[2]}), (head_idxs, tail_idxs): ({(matched_head[0], matched_head[1]) ,  (matched_tail[0], matched_tail[1])}) \n\tRelation aliases: {relation_aliases}"   )
 
-        for l in triples_found_logs:
-            buid_logger.info(l)
 
-        golden_triples[sen_id] = {"sentence_tokens": sen_tokens, "triples": sen_trps}
+def main_cpu():
+    k = 1000
 
+    descs, triples, _, aliases = get_min_descriptionsNorm_triples_relations(k)
+    silver_span_head_s, silver_span_head_e,  silver_span_tail_s,silver_span_tail_e, _  = extract_silver_spans(descs, triples, aliases)
     silver_spans = {
-        "head_start":silver_span_sub_s ,
-        "head_end": silver_span_sub_e,
-        "tail_start": silver_span_obj_s,
-        "tail_end":silver_span_obj_e ,
+        "head_start":silver_span_head_s ,
+        "head_end": silver_span_head_e,
+        "tail_start": silver_span_tail_s,
+        "tail_end":silver_span_tail_e ,
+    }
+    cache_array(silver_spans, PKLS_FILES["silver_spans"][k])
+
+def test_extract_silver_spans():
+    aliases = {
+        "q100": ["football", "football soccer"],
+        "q500": ["number 9", "num 0"],
+        "q700": ["Roland crystal"],
+        "q800": ["ML", "machine learning"],
+        "q900": ["italy", "italia"],
+        "q901": ["europe", "european union"],
+        "q1000": ["soccer football player"]
+    }
+    triples= {
+        "q2": [ ("q700", "r2", "q800")],
+        "q1": [ ("q100" , "r1", "q500"), ("q100", "r2", "q1000")],
+        "q3": [("q900", "r3", "q901")]
     }
 
-
-    cache_array(silver_spans, silver_spans_file)
-    cache_array(golden_triples, golden_triples_file)
-
+    descriptions = {
+        "q1": "Raymond Neifel is an indian football soccer player with number 9",
+        "q2": "Roland Crystal is the greatest machine learning engineer",
+        "q3": "Italia is a country in the european union"
+    }
+    BATCH_SIZE = len(descriptions)
+    sentences_texts = list(descriptions.values())
+    silver_span_head_s, silver_span_head_e,  silver_span_tail_s,silver_span_tail_e, all_sentences_tokens  = extract_silver_spans(descriptions, triples, aliases)
+    all_heads = []
+    all_tails = []
+    for sen_idx in range(BATCH_SIZE):
+        head_starts = silver_span_head_s[sen_idx]
+        head_ends = silver_span_head_e[sen_idx]
+        sen_tokens = all_sentences_tokens[sen_idx]
         
-
-
-if __name__ == "__main__":
+        head_starts_idxs = torch.nonzero(head_starts == 1, as_tuple=True)[0]
+        head_ends_idxs = torch.nonzero(head_ends == 1, as_tuple=True)[0]
         
-    k = 1000
-    descs, triples, relations, aliases = get_min_descriptionsNorm_triples_relations(k)
-    golden_triples_file = PKLS_FILES["golden_triples"][k]
-    silver_spans_file = PKLS_FILES["silver_spans"][k]
-    buid_logger = get_logger("build_golden_triples", LOGGER_FILES["build_golden_triples"])
+        print(f"sentence: " , sentences_texts[sen_idx])
+        heads_one = []
+        for h_s, h_e in zip(head_starts_idxs, head_ends_idxs):
+            heads_one.append(sen_tokens[h_s: h_e + 1])
+            print(f"\t HEAD: {sen_tokens[h_s: h_e + 1]}")
+            
+        all_heads.append(heads_one)            
+
+    for sen_idx in range(BATCH_SIZE):
+        tail_starts = silver_span_tail_s[sen_idx]
+        tail_ends = silver_span_tail_e[sen_idx]
+        sen_tokens = all_sentences_tokens[sen_idx]
+        
+        tail_starts_idxs = torch.nonzero(tail_starts == 1, as_tuple=True)[0]
+        tail_ends_idxs = torch.nonzero(tail_ends == 1, as_tuple=True)[0]
+        
+        print(f"sentence: " , sentences_texts[sen_idx])
+        tails_one = []
+        
+        for t_s, t_e in zip(tail_starts_idxs, tail_ends_idxs):
+            tails_one.append( sen_tokens[t_s: t_e + 1])
+            print(f"\t TAIL: {sen_tokens[t_s: t_e + 1]}")
+        all_tails.append(tails_one)
+    assert [[['football']], [['Roland', 'Crystal']], [['Italia']]] == all_heads
+    assert [[['number', '9']], [['machine', 'learning']], [['euro', '##pe', '##an', 'union']]] == all_tails
+    print("all good and great ")
     
-    create_silver_spans(descs,triples,relations, aliases , buid_logger,golden_triples_file, silver_spans_file )
+    
+if __name__ == "__main__":
+    main_cpu()
+    # test_extract_silver_spans()

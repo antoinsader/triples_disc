@@ -1,9 +1,4 @@
 
-# pip install numpy  tqdm
-# pip install torch 
-# pip install scikit-learn 
-# pip install pykeen
-
 #install raw files: 
 
 # mkdir data
@@ -18,8 +13,11 @@
 
 # python -m venv myenv 
 # source myenv/bin/activate 
-# pip install numpy tqdm scikit-learn 
-# pip install pykeen
+
+
+# pip install numpy  tqdm pandas
+# pip install torch transformers
+# pip install scikit-learn  nltk
 
 
 # export TORCH_CUDA_ARCH_LIST="12.0"
