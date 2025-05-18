@@ -1,164 +1,139 @@
-from Data import get_min_descriptionsNorm_triples_relations, LOGGER_FILES, PKLS_FILES
-from utils.utils import read_cached_array, cache_array, get_logger
-from transformers import BertTokenizerFast
-import torch
+import pickle 
+import re 
+import concurrent.futures
+from functools import partial
+from tqdm import tqdm 
+import unicodedata
 
-DESCRIPTION_MAX_LENGTH = 128
-
-def build_alias_id_tensors(aliases, tokenizer, device):
-    """
-    Flatten your alias dict into a mapping from (entity, alias_string) 
-    to a 1D torch tensor of token-IDs on the GPU.
-    """
-    alias_id_tensors = {}
-    for ent, alias_list in aliases.items():
-        for alias in alias_list:
-            toks = tokenizer.tokenize(alias)
-            if not toks:
-                continue
-            ids = tokenizer.convert_tokens_to_ids(toks)
-            alias_id_tensors[(ent, alias)] = torch.tensor(ids, device=device, dtype=torch.long)
-    return alias_id_tensors
-
-def get_entity_spans_batch(sent_ids, alias_id_tensors):
-    """
-    sent_ids: [batch_size, seq_len] of token IDs on GPU
-    alias_id_tensors: dict mapping (entity,alias) -> [m] ID tensor on GPU
-    Returns: dict mapping (batch_idx, entity, alias) -> list of start_idxs
-    """
-    batch_size, seq_len = sent_ids.shape
-    spans = {}  # (b, entity, alias) -> [start positions]
-
-    # Pre‐compute all unfolded windows for this batch only once per possible window‐size
-    # We'll group aliases by length to avoid repeated unfold calls.
-    by_length = {}
-    for (ent, alias), id_tensor in alias_id_tensors.items():
-        m = id_tensor.size(0)
-        if m > seq_len:
-            continue
-        by_length.setdefault(m, []).append(((ent, alias), id_tensor))
-
-    for m, alias_entries in by_length.items():
-        # unfold: [batch, seq_len-m+1, m]
-        windows = sent_ids.unfold(1, size=m, step=1)  
-        # now for each alias of length m, compare all windows in one shot
-        for (ent, alias), alias_ids in alias_entries:
-            # broadcast compare: [batch, seq_len-m+1, m] == [m] -> [batch, seq_len-m+1, m]
-            eq = windows == alias_ids.view(1,1,m)
-            # reduce over the m‐dimension: True where all tokens match
-            match_mask = eq.all(dim=2)  # [batch, seq_len-m+1]
-            # find all indices
-            for b in range(batch_size):
-                idxs = torch.nonzero(match_mask[b], as_tuple=False).view(-1).cpu().tolist()
-                if idxs:
-                    spans.setdefault((b, ent, alias), []).extend(idxs)
-
-    return spans
-
-def create_silver_spans(descs, triples, relations, aliases,
-                        buid_logger, golden_triples_file, silver_spans_file,
-                        bert_tokenizer):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    logger = buid_logger
-
-    # 1) tokenize all sentences once, send them to the GPU
-    sentences = list(descs.values())
-    encoded = bert_tokenizer(
-        sentences,
-        padding="longest",
-        truncation=True,
-        return_tensors="pt",
-        max_length=DESCRIPTION_MAX_LENGTH,
-    )
-    sent_ids = encoded["input_ids"].to(device)  # [batch, seq_len]
-    batch_size, seq_len = sent_ids.shape
-
-    # 2) build alias‐ID tensors for heads and tails
-    logger.info("Building alias ID tensors on %s", device)
-    head_alias_tensors = build_alias_id_tensors(aliases, bert_tokenizer, device)
-    tail_alias_tensors = build_alias_id_tensors(aliases, bert_tokenizer, device)
-
-    # 3) run batch‐span‐extraction
-    head_spans = get_entity_spans_batch(sent_ids, head_alias_tensors)
-    tail_spans = get_entity_spans_batch(sent_ids, tail_alias_tensors)
-
-    # 4) allocate GPU tensors for silver spans
-    silver_sub_s = torch.zeros(batch_size, seq_len, device=device)
-    silver_sub_e = torch.zeros(batch_size, seq_len, device=device)
-    silver_obj_s = torch.zeros(batch_size, seq_len, device=device)
-    silver_obj_e = torch.zeros(batch_size, seq_len, device=device)
-
-    golden_triples = {}
-    logger.info(f"Processing {batch_size} sentences for golden triples")
-    for b, sen_id in enumerate(descs.keys()):
-        sen_trps = []
-        for h, r, t in triples[sen_id]:
-            # gather all alias matches for this head entity
-            for alias in aliases[h]:
-                for start in head_spans.get((b, h, alias), []):
-                    end = start + head_alias_tensors[(h, alias)].size(0) - 1
-                    # now tails
-                    for tail_alias in aliases[t]:
-                        for tstart in tail_spans.get((b, t, tail_alias), []):
-                            tend = tstart + tail_alias_tensors[(t, tail_alias)].size(0) - 1
-
-                            # mark silver spans
-                            silver_sub_s[b, start] = 1
-                            silver_sub_e[b, end]   = 1
-                            silver_obj_s[b, tstart] = 1
-                            silver_obj_e[b, tend]    = 1
-
-                            sen_trps.append(((start, end), (tstart, tend)))
-                            logger.info(
-                                "Found TRIPLE: head='%s' [%d,%d], tail='%s' [%d,%d], rel_aliases=%s",
-                                alias, start, end, tail_alias, tstart, tend, relations[r]
-                            )
-
-        golden_triples[sen_id] = {
-            "sentence_tokens": bert_tokenizer.convert_ids_to_tokens(encoded["input_ids"][b]),
-            "triples": sen_trps
-        }
-
-    # move silver spans back to CPU before caching
-    silver_spans = {
-        "head_start": silver_sub_s.cpu(),
-        "head_end":   silver_sub_e.cpu(),
-        "tail_start": silver_obj_s.cpu(),
-        "tail_end":   silver_obj_e.cpu(),
-    }
-
-    cache_array(silver_spans, "./draft_silver_spans_new.pkl")
-    cache_array(golden_triples, "./draft_golden_triples_new.pkl")
-    
-    return silver_spans
+from collections import defaultdict
 
 
+aliases = {
+    "q1": ["q one", "q 1", "q-1", "Q 1"],
+    "q2": ["q two", "q 2", "q-2", "q 2 يب"],
+    "q3": ["q three", "q 3", "q-3", "àù2"],
+    "q4": ["q four", "q 4", "q-4"],
+    "q5": ["q five", "q 5", "q-5"],
+    "q6": ["q six", "q 6", "q-6"],
+    "q7": ["q seven", "q 7", "q-7"],
+    "q8": ["q eiight", "q 8", "q-8"],
+    "q9": ["q nine", "q 9", "q-9"],
+    "q10": ["q ten", "q 10", "q-10"],
+    "q11": ["q eleven", "q 11", "q-11"],
+    "q12": ["q twelve", "q 12", "q-12"],
+}
 
+desc_dict_all = {
+    "q1": "I àm     q1 يسش  text", 
+    "q2": "I am q2 text", 
+    "q3": "I am q3 text", 
+    "q4": "I am q4 text", 
+    "q5": "I am q5 text", 
+    "q6": "I am q6 text", 
+    "q7": "I am q7 text", 
+    "q8": "I am q8 text", 
+    "q9": "I am q9 text", 
+    "q10": "I am q10 text", 
+    "q11": "I am q11 text", 
+    "q12": "I am q12 text", 
+    "q13": "I am q13 text", 
+    "q14": "I am q14 text", 
+    "q15": "I am q15 text", 
+    "q16": "I am q16 text", 
+}
 
-if __name__ == "__main__":
-    tokenizer = BertTokenizerFast.from_pretrained('bert-base-cased')
-
-    k = 100
-    descs, triples, relations, aliases = get_min_descriptionsNorm_triples_relations(k)
-    golden_triples_file = PKLS_FILES["golden_triples"][k]
-    silver_spans_file = PKLS_FILES["silver_spans"][k]
-    buid_logger = get_logger("build_golden_triples", LOGGER_FILES["build_golden_triples"])
-    
-    create_silver_spans(
-                        descs = descs, triples = triples, relations= relations, aliases= aliases,
-                        buid_logger=buid_logger, golden_triples_file=golden_triples_file, silver_spans_file = silver_spans_file,
-                        bert_tokenizer = tokenizer
-                        
-                        )
-    
-
-import pickle
 def read_cached_array(filename):
-    with open(filename, 'rb') as f:
+    with open(filename, 'rb', buffering=16*1024*1024) as f:
         return pickle.load(f)
 
-silver_spans_file = PKLS_FILES["silver_spans"]["full"]
-silver_spans = read_cached_array(silver_spans_file)
-silver_spans.shape
 
 
+def replace_special_chars(text, compiled_patterns):
+    for pattern, replacement in compiled_patterns:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+def normalize_als_batch(als_batch_dict):
+    compiled_strange_chars = read_cached_array(f"./data/helpers/strange_chars.pkl")
+    valid_word_pattern = re.compile(r"^[A-Za-z0-9.,!?;:'\"()\-]+$")
+    def keep_only_english_chars(text):
+        return ' '.join(word for word in text.split() if valid_word_pattern.match(word))
+    new_dict = defaultdict(list)
+    for k, val in als_batch_dict.items():
+        local_set = set()
+        for als in val:
+            aa  = replace_special_chars(als, compiled_strange_chars)
+            aa = keep_only_english_chars(aa)
+            aa = unicodedata.normalize('NFKC', aa)
+            aa = re.sub(r'\s+', ' ', aa).strip()
+            aa = aa.lower()
+            local_set.add(aa)
+
+        new_dict[k]  = list(local_set)
+    return new_dict
+
+
+def normalize_desc_batch(descs_batch_dict):
+    compiled_strange_chars = read_cached_array(f"./data/helpers/strange_chars.pkl")
+    
+    valid_word_pattern = re.compile(r"^[A-Za-z0-9.,!?;:'\"()\-]+$")
+    def keep_only_english_chars(text):
+        return ' '.join(word for word in text.split() if valid_word_pattern.match(word))
+    new_dict = {}
+    for k, val in descs_batch_dict.items():
+        val = replace_special_chars(val, compiled_strange_chars)
+        val = keep_only_english_chars(val)
+        val = unicodedata.normalize('NFKC', val)
+        val = re.sub(r'\s+', ' ', val).strip()
+        new_dict[k]  = val
+
+    return new_dict
+
+    
+def normalize_descriptions():
+    descs = desc_dict_all
+    batch_size =  len(descs) // 4
+    items = list(descs.items())
+    
+    batches = [
+        dict(items[i : i+batch_size])
+        for i in range(0, len(items), batch_size)
+    ]
+
+    with concurrent.futures.ProcessPoolExecutor() as executor:
+        normalize_func = partial(normalize_desc_batch)
+        results = list(tqdm(
+            executor.map(normalize_func, batches),
+            total=len(batches),
+            desc="Processing batches"
+        ))
+
+    dic_norm = {k: v for batch in results for k,v in batch.items()}
+    print(dic_norm)
+
+def normalize_aliases():
+
+    batch_size =  len(aliases) // 4
+    items = list(aliases.items())
+
+    batches = [
+        dict(items[i : i+batch_size])
+        for i in range(0, len(items), batch_size)
+    ]
+
+    with concurrent.futures.ProcessPoolExecutor() as executor:
+        normalize_func = partial(normalize_als_batch)
+        results = list(tqdm(
+            executor.map(normalize_func, batches),
+            total=len(batches),
+            desc="Processing batches"
+        ))
+
+    dic_norm = {k: v for batch in results for k,v in batch.items()}
+    print(dic_norm)
+
+    # return dic_norm
+if __name__ == "__main__":
+    normalize_aliases()
+    normalize_descriptions()

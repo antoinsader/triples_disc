@@ -1509,27 +1509,6 @@ def get_pos_weights(dataset, batch_size=256, num_workers=4):
         
     }
 
-def compute_loss(out, batch, bce_losses):
-    L = 0.0
-
-    L += bce_losses['f_sub_s'](out['forward']['sub_s'].squeeze(-1),
-                               batch['labels_head_start'])
-    L += bce_losses['f_sub_e'](out['forward']['sub_e'].squeeze(-1),
-                               batch['labels_head_end'])
-    L += bce_losses['f_obj_s'](out['forward']['obj_s'].squeeze(-1),
-                               batch['labels_tail_start'])
-    L += bce_losses['f_obj_e'](out['forward']['obj_e'].squeeze(-1),
-                               batch['labels_tail_end'])
-
-    L += bce_losses['b_obj_s'](out['backward']['obj_s'].squeeze(-1),
-                               batch['labels_tail_start'])
-    L += bce_losses['b_obj_e'](out['backward']['obj_e'].squeeze(-1),
-                               batch['labels_tail_end'])
-    L += bce_losses['b_sub_s'](out['backward']['sub_s'].squeeze(-1),
-                               batch['labels_head_start'])
-    L += bce_losses['b_sub_e'](out['backward']['sub_e'].squeeze(-1),
-                               batch['labels_head_end'])
-    return L / 8.0
     
 
 
@@ -1556,6 +1535,27 @@ def load_checkpoint(model, optimizer, filename="checkpoint.pth"):
     
     
 
+def compute_loss(out, batch, bce_losses):
+    L = 0.0
+
+    L += bce_losses['f_sub_s'](out['forward']['sub_s'].squeeze(-1),
+                               batch['labels_head_start'])
+    L += bce_losses['f_sub_e'](out['forward']['sub_e'].squeeze(-1),
+                               batch['labels_head_end'])
+    L += bce_losses['f_obj_s'](out['forward']['obj_s'].squeeze(-1),
+                               batch['labels_tail_start'])
+    L += bce_losses['f_obj_e'](out['forward']['obj_e'].squeeze(-1),
+                               batch['labels_tail_end'])
+
+    L += bce_losses['b_obj_s'](out['backward']['obj_s'].squeeze(-1),
+                               batch['labels_tail_start'])
+    L += bce_losses['b_obj_e'](out['backward']['obj_e'].squeeze(-1),
+                               batch['labels_tail_end'])
+    L += bce_losses['b_sub_s'](out['backward']['sub_s'].squeeze(-1),
+                               batch['labels_head_start'])
+    L += bce_losses['b_sub_e'](out['backward']['sub_e'].squeeze(-1),
+                               batch['labels_head_end'])
+    return L / 8.0
 def build_bce_loss_dict(pos_weights):
     pw = {k: torch.tensor(v, dtype=torch.float32).to(device)
       for k, v in pos_weights.items()}

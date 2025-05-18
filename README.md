@@ -60,3 +60,34 @@ To start the project:
  Bidirectional relation-guided attention network.pdf
 
 
+
+### GPU Code: 
+ 1- vm/min/1_prep.py:
+        
+        -  prepare_main(percentage):
+                specify the percentage of descriptions to be used, full descriptions are 5M
+                let's say you choose 0.0002, then you will have around 1k descriptions
+
+                Function steps:
+                    - random.sample depending on percentage for descriptions 
+                    - Get triples of the selected descriptions 
+                    - Save the tails of those triples in my_tails 
+                    - Add the tails keys into list of descriptions keys (that's why the descriptions length would not be exactly as the percentage)
+                    - get relations from triples 
+                    - get aliases for selected description keys
+                    - get descriptions texts for all 
+                    - Save descriptions_unormalized, aliases, relations, triples dicts in pkl files
+        - normalize_descriptions(): 
+            Function steps:
+                - read unormalized dictionaries
+                - split the descriptions into batches depending on NUM_WORKERS (specified based on cpu cores )
+                - use parallelization on num_workers to execute normalize_desc_batch
+                - normalize desc_batch do the following for each description:
+                        - replace special chars (like à into a)
+                        - keep only english letters (remove arabic chineese,.. ) letters
+                        - remove multiple consequent spaces
+                - collect results from workers and save the result of normalized descriptions in pkl file
+
+        - normalize aliases():
+            - Same as normalize_descriptions but here with making aliases lower case 
+

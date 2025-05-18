@@ -442,12 +442,12 @@ class TripleDataset(Dataset):
 def negative_sampling(pos_triples, n_entities):
     neg_triples = pos_triples.clone()
     batch_size = pos_triples.shape[0]
-    
+
     mask = torch.randint(0, 2, (batch_size,), device=pos_triples.device, dtype=torch.bool)
     random_entities = torch.randint(0, n_entities, (batch_size,), device=pos_triples.device)
     neg_triples[~mask, 0] = random_entities[~mask]
     neg_triples[mask, 2] = random_entities[mask]
-    
+
     return neg_triples
 
 
