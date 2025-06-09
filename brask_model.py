@@ -340,14 +340,14 @@ class BRASKModel(nn.Module):
         #forward
         f_obj_s_logits = self.f_start_obj_fc(f_Hijk)
         f_obj_e_logits = self.f_end_obj_fc(f_Hijk)
-        f_obj_start_probs = self.sigmoid(f_obj_s_logits).squeeze(-1) # (b, l , r)
-        f_obj_end_probs = self.sigmoid(f_obj_e_logits).squeeze(-1)  # (b, l , r)
+        # f_obj_start_probs = self.sigmoid(f_obj_s_logits).squeeze(-1) # (b, l , r)
+        # f_obj_end_probs = self.sigmoid(f_obj_e_logits).squeeze(-1)  # (b, l , r)
 
         #backward
         b_sub_start_logits = self.b_start_sub_fc(b_Hijk)
         b_sub_end_logits = self.b_end_sub_fc(b_Hijk)
-        b_sub_start_probs = self.sigmoid(b_sub_start_logits).squeeze(-1) # (b, l , r)
-        b_sub_end_probs = self.sigmoid(b_sub_end_logits).squeeze(-1) # (b, l , r)
+        # b_sub_start_probs = self.sigmoid(b_sub_start_logits).squeeze(-1) # (b, l , r)
+        # b_sub_end_probs = self.sigmoid(b_sub_end_logits).squeeze(-1) # (b, l , r)
 
 
 
@@ -509,7 +509,7 @@ def train_model(dataset,k,thresholds,checkpoint_path, transE_emb_dim=100, batch_
             avg_loss = total_loss / batch_count if batch_count > 0 else 0.0
             pbar_epoch.set_postfix(epoch=epoch+1, avg_loss=f"{avg_loss:.4f}",last_loss=last_loss )
             save_checkpoint(model, optimizer, epoch, total_loss, filename=checkpoint_path)
-            
+
             
     return model
 

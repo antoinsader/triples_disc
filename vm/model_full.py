@@ -60,8 +60,8 @@ def cache_array(ar, filename):
     with open(filename, 'wb') as f:
         pickle.dump(ar, f)
     print(f"Array chached in file {filename}")
-    
-    
+
+
 def read_cached_array(filename):
     with open(filename, 'rb', buffering=16*1024*1024) as f:
         return pickle.load(f)

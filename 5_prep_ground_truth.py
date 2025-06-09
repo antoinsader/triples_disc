@@ -59,14 +59,17 @@ def extract_silver_spans(descs, triples, aliases):
 
         batch = sentences_texts[i : i + CHUNK_SIZE]
         enc = tokenizer(
-            batch, 
+            batch,
             return_offsets_mapping=True,
             add_special_tokens = False,
-            padding="max_length", 
+            return_attention_mask=False,
+            return_token_type_ids=False,
+            padding="max_length",
             truncation=True,
             max_length=DESCRIPTION_MAX_LENGTH
-            
         )
+
+        #enc.offset_mapping is a list with len of batch, each item having spans of each token inside the sentence
         all_sentences_offsets.extend(enc.offset_mapping)
 
         for sen_idx, enc_obj in enumerate(enc.encodings):

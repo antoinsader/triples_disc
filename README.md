@@ -88,6 +88,11 @@ To start the project:
                         - remove multiple consequent spaces
                 - collect results from workers and save the result of normalized descriptions in pkl file
 
-        - normalize aliases():
+        - normalize_aliases():
             - Same as normalize_descriptions but here with making aliases lower case 
 
+        -prep_relations_main():
+            
+            
+            Function steps:
+                -

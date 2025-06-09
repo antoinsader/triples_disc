@@ -64,8 +64,6 @@ PKLS_FILES = {
         "full_attention_mask": f"{DESCRIPTIONS_NORMALIZED_FOLDER}/descriptions_full_attention_masks.pkl",
         "sentence_tokens": f"{DESCRIPTIONS_NORMALIZED_FOLDER}/descriptions_full_sentence_tokens.pkl",
         "aliases_tokenized": f"{DESCRIPTIONS_NORMALIZED_FOLDER}/aliases_tokenized.pkl"
-        
-        
     },
     "aliases_dict": f"{DICTIONARIES_FOLDER}/aliases_dict.pkl",
     "aliases_rev": f"{DICTIONARIES_FOLDER}/aliases_rev.pkl",

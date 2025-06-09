@@ -1,6 +1,7 @@
 
 import torch
 from torch.nn.utils.rnn import pad_sequence
+from datasets import Dataset as HFDataset
 
 #greattttttttt approach for optimization
 def get_h_gs_opt(sentences, tokenizer, model, max_length, device, num_workers):

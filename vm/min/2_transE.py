@@ -1,7 +1,28 @@
-TRANSE_BATCH_SIZE = 52224
-TRANSE_NUM_EPOCHS = 140
-TRANSE_EMB_DIM = 100
-NUM_WORKERS = 48
+
+
+import torch
+
+
+device_str = 'cpu'
+if torch.cuda.is_available():
+  device_str = "cuda"
+
+device = torch.device(device_str)
+
+
+
+if device_str == 'cpu':
+    TRANSE_BATCH_SIZE = 32
+    TRANSE_NUM_EPOCHS = 124
+    TRANSE_EMB_DIM = 100
+    NUM_WORKERS = 1
+
+
+else:
+    TRANSE_BATCH_SIZE = 52224
+    TRANSE_NUM_EPOCHS = 140
+    TRANSE_EMB_DIM = 100
+    NUM_WORKERS = 48
 
 
 
@@ -86,19 +107,18 @@ CHECKPOINTS_FILES = {
 
 def do_transe_triples(triples_dict):
     all_triples = [trpl for triples in triples_dict.values() for trpl in triples]
-    
     entities = set()
     relations = set()
 
-    rel2id = {rel: idx + 1 for _,r,_ in all_triples for idx, rel in  enumerate(r)}
+    rel2id = {rel: idx  for _,r,_ in all_triples for idx, rel in  enumerate(r)}
     ls = []
 
     for h,r,t in all_triples:
         entities.update([h,t])
         relations.add(r)
 
-    ent2id = {ent: idx + 1 for idx, ent in enumerate(sorted(entities)) }
-    rel2id = {rel: idx + 1 for idx, rel in enumerate(sorted(relations)) }
+    ent2id = {ent: idx  for idx, ent in enumerate(sorted(entities)) }
+    rel2id = {rel: idx  for idx, rel in enumerate(sorted(relations)) }
     triples_tensor  = torch.tensor([(ent2id[h], rel2id[r], ent2id[t]) for (h, r, t) in all_triples])
     return len(entities), len(relations), triples_tensor 
 
@@ -240,7 +260,7 @@ def train_transE_model_gpu(triples, n_ents, n_rels,lr,local_rank ):
                 neg_triples = pos_batch.clone()
                 batch_size = pos_batch.size(0)
 
-                mask = torch.randint(0,2 , (batch_size), device = pos_batch.device, dtype=torch.bool)
+                mask = torch.randint(0,2 , (batch_size,), device = pos_batch.device, dtype=torch.bool)
                 random_ents = torch.randint(0, n_ents, (batch_size,), device=pos_batch.device)
                 neg_triples[~mask, 0] = random_ents[~mask]
                 neg_triples[mask, 2] = random_ents[mask]
@@ -269,21 +289,19 @@ def train_transE_model_gpu(triples, n_ents, n_rels,lr,local_rank ):
     return  model.rel_embs.weight.data
 
 
-def train_transE_model_cpu(triples, n_ents, n_rels,lr,local_rank ):
+def train_transE_model_cpu(triples, n_ents, n_rels,lr ):
     num_epochs, batch_size, num_workers, emb_dim = TRANSE_NUM_EPOCHS, TRANSE_BATCH_SIZE, NUM_WORKERS, TRANSE_EMB_DIM
     margin = 1.0 
 
     dataset = TripleDataset(triples)
 
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True,
-                    num_workers=num_workers, pin_memory=True)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True,num_workers=0)
 
 
     
-    model = torch.compile(TransEModel(n_ents, n_rels, margin))
+    model =  TransEModel(n_ents, n_rels, margin)
 
     optimizer = optim.Adam(model.parameters(), lr=lr)
-    model_checkpoint_path = CHECKPOINTS_FILES["transe_model"].replace(".pth", f"_{local_rank}.pth")
 
     start_epoch, last_total_loss = 0, 0.0
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=TRANSE_NUM_EPOCHS)
@@ -293,22 +311,20 @@ def train_transE_model_cpu(triples, n_ents, n_rels,lr,local_rank ):
             model.train()
             total_loss = last_total_loss
 
-
+            print("************************ EPOCH STARTED")
             batch_count = 0
             for pos_batch in tqdm(dataloader, desc=f"epoch {epoch+1}", leave=False):
                 pos_batch = pos_batch.to(device)
 
                 neg_triples = pos_batch.clone()
                 batch_size = pos_batch.size(0)
-
-                mask = torch.randint(0,2 , (batch_size), device = pos_batch.device, dtype=torch.bool)
+                mask = torch.randint(0,2 , (batch_size,), device = pos_batch.device, dtype=torch.bool)
                 random_ents = torch.randint(0, n_ents, (batch_size,), device=pos_batch.device)
                 neg_triples[~mask, 0] = random_ents[~mask]
                 neg_triples[mask, 2] = random_ents[mask]
 
                 pos_dist, neg_dist = model(pos_batch, neg_triples)
                 loss = calc_loss(pos_dist=pos_dist, neg_dist=neg_dist, margin=margin)
-
                 loss.backward()
                 optimizer.step()
 
@@ -320,27 +336,28 @@ def train_transE_model_cpu(triples, n_ents, n_rels,lr,local_rank ):
 
                 total_loss += loss.item() 
                 batch_count += 1
+            print("************************ EPOCH finsihed")
 
             scheduler.step()
             avg_loss = total_loss / batch_count if batch_count > 0 else 0.0 
             epochs_bar.set_postfix(epoch=epoch+1, avg_loss=f"{avg_loss: .4f}")
             # save_transe_checkpoint(model, optimizer, epoch, total_loss, filename=model_checkpoint_path)
-    dist.destroy_process_group()
     return  model.rel_embs.weight.data
 
 
 def transe_main():
-
     triples, n_ents, n_rels = prepare_triples()
     print(f"We have {n_ents} entities, {n_rels} relationships and {triples.shape} triples")
+    if device_str == 'cpu':
+        rel_embeddings = train_transE_model_cpu(triples, n_ents, n_rels, 0.001)
+        print(f"relation embeddings shape: {rel_embeddings.shape}")
+    else:
+        local_rank = int(os.environ['LOCAL_RANK'])
+        torch.cuda.set_device(local_rank)
+        # dist.init_process_group(backend='nccl')
+        rel_embeddings = train_transE_model_gpu(triples, n_ents, n_rels, 0.001, local_rank)
+        print(f"relation embeddings shape: {rel_embeddings.shape}")
 
-    local_rank = int(os.environ['LOCAL_RANK'])
-    torch.cuda.set_device(local_rank)
-
-    # dist.init_process_group(backend='nccl')
-
-    rel_embeddings = train_transE_model_cpu(triples, n_ents, n_rels, 0.001, local_rank)
-    print(f"relation embeddings shape: {rel_embeddings.shape}")
     cache_array(rel_embeddings,  RESULT_FILES["transE_relation_embeddings"])
 
 

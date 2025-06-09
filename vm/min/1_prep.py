@@ -8,11 +8,21 @@ if torch.cuda.is_available():
 device = torch.device(device_str)
 
 
-NUM_WORKERS = 0
-RELATIONS_BATCH_SIZE = 32
-DESCRIPTIONS_MAX_LENGTH = 128
+device_str = 'cpu'  
+if torch.cuda.is_available():
+  device_str = "cuda"
 
+device = torch.device(device_str)
 
+if device_str == 'cpu':
+    NUM_WORKERS = 4
+    RELATIONS_BATCH_SIZE = 32
+    DESCRIPTIONS_MAX_LENGTH = 128
+
+else:
+    NUM_WORKERS = 48
+    RELATIONS_BATCH_SIZE = 8192
+    DESCRIPTIONS_MAX_LENGTH = 128
 
 
 
@@ -26,7 +36,6 @@ DESCRIPTIONS_MAX_LENGTH = 128
 # pip install scikit-learn  nltk datasets psutil
 # pip install joblib
 
-import lz4.frame
 from math import ceil
 import torch.nn as nn
 import torch.optim as optim
@@ -60,8 +69,7 @@ from functools import partial
 import unicodedata
 
 import nltk
-from nltk.corpus import words
-
+from nltk.corpus import stopwords
 
 
 
@@ -102,9 +110,11 @@ def save_tensor(tensor, path):
     print(f"Tensor chached in file {path}")
 
 
+
 def read_tensor(path):
+    print(f"reading from path {path}")
     loaded = np.load(path)
-    return torch.from_numpy(loaded("data"))
+    return torch.from_numpy(loaded["arr"])
 
 
 
@@ -125,16 +135,18 @@ RESULT_FILES  = {
     "descriptions_unormalized": f"{RESULTS_FOLDER}/descriptions_unormalized.pkl",
     "descriptions": f"{RESULTS_FOLDER}/descriptions.pkl",
     "aliases": f"{RESULTS_FOLDER}/aliases.pkl",
+    "alias_patterns": f"{RESULTS_FOLDER}/aliases_patterns.pkl",
     "relations": f"{RESULTS_FOLDER}/relations.pkl",
     "triples": f"{RESULTS_FOLDER}/triples.pkl",
     "transE_relation_embeddings": f"{RESULTS_FOLDER}/transE_rel_embs.pkl",
-    "rel_embs_tensor": f"{RESULTS_FOLDER}/rel_embs_tensor.npz"
+    "rel_embs_tensor": f"{RESULTS_FOLDER}/rel_embs_tensor.npz",
 }
 
 HELPER_FILES = {
     "strange_chars": f"{HELPERS_FOLDER}/strange_chars.pkl",
+    "stop_words": f"{HELPERS_FOLDER}/stop_words.pkl",
     "keys_not_in_als": f"{HELPERS_FOLDER}/keys_not_in_als.pkl",
-    
+
     "descs_all": f"{HELPERS_FOLDER}/descs_all.pkl",
     "aliases_all": f"{HELPERS_FOLDER}/aliases_all.pkl",
     "triples_all": f"{HELPERS_FOLDER}/triples_all.pkl",
@@ -252,7 +264,20 @@ def save_strange_chars_dict():
     }.items()]
     cache_array(compiled_patterns, HELPER_FILES['strange_chars'])
 
+def save_stop_words():
+    nltk.download('stopwords')
+    stop_words = stopwords.words('english')
+    cache_array(stop_words, HELPER_FILES["stop_words"])
+
 def prepare_main_cpu_1(percentage=.5):
+    """
+        Get all triples, all descriptions 
+        Make desc_keys as random sample from description keys 
+        make my_triples which is triples having keys inside desc_keys 
+        make my_tails which are keys of the tails of my_triples 
+        make final description keys which are keys of desc_keys + keys of my_tails
+        save final triples, final descriptions
+    """
     triples_fp = RAW_TXT_FILES["triples"]
     triples_dict = get_triples(triples_fp)
     descs_raw_f  = RAW_TXT_FILES["descriptions"]
@@ -281,10 +306,10 @@ def prepare_main_cpu_2():
     final_desc_dict = read_cached_array( RESULT_FILES["descriptions_unormalized"])
     final_triples = read_cached_array(RESULT_FILES["triples"])
 
-
+    my_tails  = [t for v in final_triples.values() for _,_,t in v]
 
     final_desc_dict_keys = final_desc_dict.keys()
-    final_aliases_dict = {k:v for k,v in aliases_dict_all.items() if k in final_desc_dict_keys}
+    final_aliases_dict = {k:v for k,v in tqdm(aliases_dict_all.items()) if k in final_desc_dict_keys or k in my_tails}
     cache_array(final_aliases_dict, RESULT_FILES["aliases"])
 
 
@@ -371,7 +396,8 @@ def prepare_main(percentage=.5):
 
     print(f"aliases dict all has: {len(aliases_dict_all)} and first key is : {list(aliases_dict_all.keys())[0]} and first value is : {list(aliases_dict_all.values())[0]}")
     print(f" triples has {len(final_triples)} heads.  making aliases...")
-    final_aliases_dict = {k:v for k,v in aliases_dict_all.items() if k in final_desc_dict_keys}
+    triples_tails = [t for v in final_triples.values() for _,_,t in  v]
+    final_aliases_dict = {k:v for k,v in aliases_dict_all.items() if k in final_desc_dict_keys or k in triples_tails}
     cache_array(final_aliases_dict, RESULT_FILES["aliases"])
 
 
@@ -392,6 +418,7 @@ def replace_special_chars(text, compiled_patterns):
 
 
 def normalize_als_batch(als_batch_dict):
+    stop_words = read_cached_array(HELPER_FILES["stop_words"])
     compiled_strange_chars = read_cached_array(HELPER_FILES["strange_chars"])
     valid_word_pattern = re.compile(r"^[A-Za-z0-9.,!?;:'\"()\-]+$")
     def keep_only_english_chars(text):
@@ -405,8 +432,8 @@ def normalize_als_batch(als_batch_dict):
             aa = unicodedata.normalize('NFKC', aa)
             aa = re.sub(r'\s+', ' ', aa).strip()
             aa = aa.lower()
-
-            local_set.add(aa)
+            if aa != '' and als not in stop_words:
+                local_set.add(aa)
 
         new_dict[k]  = list(local_set)
     return new_dict
@@ -430,7 +457,7 @@ def normalize_desc_batch(descs_batch_dict):
     
 def normalize_descriptions():
     descs = read_cached_array(RESULT_FILES["descriptions_unormalized"])
-
+    print(len(descs))
     batch_size =  len(descs) // NUM_WORKERS
     items = list(descs.items())
     
@@ -453,7 +480,7 @@ def normalize_descriptions():
 
 def normalize_aliases():
     aliases = read_cached_array(RESULT_FILES["aliases"])
-
+    
     batch_size =  len(aliases) // NUM_WORKERS
     items = list(aliases.items())
 
@@ -532,37 +559,21 @@ def prep_relations_main():
     save_tensor(rel_embs, RESULT_FILES["rel_embs_tensor"])
 #endregion 
 
-#region extract_silver_spans
-def extract_silver_spans_main():
-    descs_dict = read_cached_array(RESULT_FILES["descriptions"])
-    triples_dict = read_cached_array(RESULT_FILES["triples"])
-    aliases_dict =read_cached_array(RESULT_FILES["aliases"])
-
-    batch_size = len(descs_dict)
-    chunk_size = batch_size // 20
-    tokenizer = BertTokenizerFast.from_pretrained("bert-base-cased")
-    sentences_ids = list(descs_dict.keys())
-    sentences_texts = list(descs_dict.values())
-
-    sentences_heads = []
-    sentences_tails = []
-    for s in tqdm(sentences_ids, total=len(sentences_ids), desc="setting sentences heads and tails"):
-        for h, _, t in triples_dict[s]:
-            sentences_heads += [aliases_dict[h]] 
-            sentences_tails += [aliases_dict[t]]
-    print("\t doing compiled patterns for aliases ")
-
-    alias_pattern_map = {}
-    for lst in tqdm(aliases_dict.values(), total=len(aliases_dict), desc="creating compiled patterns"):
-        for als in lst:
-            escaped = re.escape(als)
+#region alias_patterns_map
+def create_alias_patterns_map():
+    aliases_all_dict = read_cached_array(RESULT_FILES["aliases"])
+    alias_patterns_map = {}
+    for als_lst in tqdm(aliases_all_dict.values()):
+        for als_str in als_lst:
+            escaped = re.escape(als_str)
             flexible = escaped.replace(r"\ ", r"\s*")
             pattern = rf"\b{flexible}\b"
-            alias_pattern_map[als] = re.comple(pattern, re.IGNORECASE)
+            alias_patterns_map[als_str] = re.compile(pattern, re.IGNORECASE)
+    cache_array(alias_patterns_map, RESULT_FILES["alias_patterns"])
 
-    
-    
 #endregion
+
+
 
 if __name__ == "__main__":
     # if device_str == "cpu":
@@ -572,7 +583,9 @@ if __name__ == "__main__":
         # prepare_main(0.5)
 
     # save_strange_chars_dict()
+    # save_stop_words()
     # normalize_descriptions()
+    # prep_relations_main()
+
     # normalize_aliases()
-    prep_relations_main()    
-    # extract_silver_spans_main()
+    create_alias_patterns_map()
