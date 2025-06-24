@@ -265,7 +265,7 @@ def train_transE_model_gpu(triples, n_ents, n_rels,lr,local_rank ):
                 neg_triples[~mask, 0] = random_ents[~mask]
                 neg_triples[mask, 2] = random_ents[mask]
                 with autocast():
-                    #forward:                    
+                    #forward:         
                     pos_dist, neg_dist = model(pos_batch, neg_triples)
                     loss = calc_loss(pos_dist=pos_dist, neg_dist=neg_dist, margin=margin)
 

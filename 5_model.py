@@ -206,7 +206,7 @@ class BRASKDataset(Dataset):
         self.descriptions_all = read_cached_array(RESULT_FILES["descriptions"])
         self.h_s = read_tensor(RESULT_FILES["silver_spans"]["head_start"])
         self.h_e = read_tensor(RESULT_FILES["silver_spans"]["head_end"])
-        self.t_s = read_tensor(RESULT_FILES["silver_spans"]["tail_start"])
+        self.t_s = read_tensor(RESULT_FILES["silver_spans"]["tail_start"]) #(B,L)
         self.t_e = read_tensor(RESULT_FILES["silver_spans"]["tail_end"])
         self.descs_ids = read_cached_array(RESULT_FILES["silver_spans"]["desc_ids"])
 
@@ -386,39 +386,47 @@ class BRASKModel(nn.Module):
 
         return {
             "forward": {
-                "head_s": f_head_start_logits.squeeze(-1), 
-                "head_e": f_head_end_logits.squeeze(-1), 
-                "tail_s": f_tail_s_logits.squeeze(-1) , 
-                "tail_e": f_tail_e_logits.squeeze(-1)  , 
+                "head_s": f_head_start_logits,   #(B, L, 1)
+                "head_e": f_head_end_logits,  #(B, L, 1)
+                "tail_s": f_tail_s_logits.squeeze(-1) , # (B<L,R)
+                "tail_e": f_tail_e_logits.squeeze(-1)  , # (B<L,R)
             },
             "backward": {
-                "tail_s": b_tail_start_logits.squeeze(-1), 
-                "tail_e": b_tail_end_logits.squeeze(-1), 
-                "head_s": b_head_s_logits.squeeze(-1), 
-                "head_e": b_head_e_logits.squeeze(-1), 
+                "tail_s": b_tail_start_logits, #(B, L, 1) 
+                "tail_e": b_tail_end_logits, #(B, L, 1)
+                "head_s": b_head_s_logits.squeeze(-1), # (B<L,R)
+                "head_e": b_head_e_logits.squeeze(-1), # (B<L,R)
             },
         }
 
-def compute_loss(out, batch, bce_losses):
+def compute_loss(out, batch, bce_losses, device):
     L = 0.0
+    labels_hs = batch['h_s'].to(device)
+    labels_he = batch['h_e'].to(device)
+    labels_ts = batch['t_s'].to(device)
+    labels_te = batch['t_e'].to(device)
 
-    L += bce_losses['f_sub_s'](out['forward']['head_s'].squeeze(-1),
-                               batch['h_s'])
-    L += bce_losses['f_sub_e'](out['forward']['head_e'].squeeze(-1),
-                               batch['h_e'])
-    L += bce_losses['f_obj_s'](out['forward']['tail_s'].squeeze(-1),
-                               batch['t_s'])
-    L += bce_losses['f_obj_e'](out['forward']['tail_e'].squeeze(-1),
-                               batch['t_e'])
+    L += bce_losses['f_head_s'](out['forward']['head_s'].squeeze(-1),
+                               labels_hs)
+    L += bce_losses['f_head_e'](out['forward']['head_e'].squeeze(-1),
+                               labels_he)
+    # I am reshaping out["forward"]["tail_s"] from (B,L,R) into (B,L) (collapsing the R dimension via max over R) which I am not sure is correct but is my best solution
+    # Because when I did the silver spans, I said that this token is tail_start without considering which relation   
+    f_tail_s_max = out["forward"]["tail_s"].max(dim=2).values
+    f_tail_e_max = out["forward"]["tail_e"].max(dim=2).values
+    #both have shapes (B, L)  
+    L += bce_losses['f_tail_s'](f_tail_s_max, labels_ts)
+    L += bce_losses['f_tail_e'](f_tail_e_max,labels_te)
 
-    L += bce_losses['b_obj_s'](out['backward']['tail_s'].squeeze(-1),
-                               batch['t_s'])
-    L += bce_losses['b_obj_e'](out['backward']['tail_e'].squeeze(-1),
-                               batch['t_e'])
-    L += bce_losses['b_sub_s'](out['backward']['head_s'].squeeze(-1),
-                               batch['h_s'])
-    L += bce_losses['b_sub_e'](out['backward']['head_e'].squeeze(-1),
-                               batch['h_e'])
+    L += bce_losses['b_tail_s'](out['backward']['tail_s'].squeeze(-1),
+                               labels_ts)
+    L += bce_losses['b_tail_e'](out['backward']['tail_e'].squeeze(-1),
+                               labels_te)
+    b_head_s_max = out["backward"]["head_s"].max(dim=2).values
+    b_head_e_max = out["backward"]["head_e"].max(dim=2).values
+
+    L += bce_losses['b_head_s'](b_head_s_max, labels_hs)
+    L += bce_losses['b_head_e'](b_head_e_max,labels_he)
     return L / 8.0
 
 def get_pos_weights(dataloader):
@@ -487,7 +495,7 @@ def train_model(dataset, ):
             for ds_batch in tqdm(dataloader, desc=f"Epoch {epoch+1}", leave=False):
                 # ds_batch = {k: v.to(device) for k, v in ds_batch.items()}
                 out = model(ds_batch)
-                loss = compute_loss(out, ds_batch, bce_losses)
+                loss = compute_loss(out, ds_batch, bce_losses, device)
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()

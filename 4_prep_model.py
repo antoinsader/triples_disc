@@ -11,9 +11,11 @@ device = torch.device(device_str)
 
 if device_str == 'cpu':
     NUM_WORKERS = 1
+    BATCH_SIZE = 16
 
 else:
-    NUM_WORKERS = 86
+    NUM_WORKERS = 100
+    BATCH_SIZE = 128
 
 
 
@@ -121,7 +123,6 @@ def keep_descriptions_having_silver_spans(descriptions_dict):
     cache_array(filtered_desc_ids, RESULT_FILES["silver_spans"]["desc_ids"])
     return True
 
-
 def get_hgs(sentences, tokenizer, model):
     def tokenize_function(batch):
         return tokenizer(
@@ -132,37 +133,53 @@ def get_hgs(sentences, tokenizer, model):
             max_length=MAX_LENGTH
         )
 
-    dataset = HFDataset.from_dict({"text": sentences})
-    print("tokenizing")
-    encoded = dataset.map(
-        tokenize_function,
-        batched=True,
-        num_proc=NUM_WORKERS
-    )
-    input_ids = torch.tensor(encoded["input_ids"]).to(device)
-    attention_mask = torch.tensor(encoded["attention_mask"]).to(device)
-    print("getting embs")
-    with torch.no_grad():
-        bert_out = model(input_ids=input_ids, attention_mask=attention_mask)
-        embs = bert_out.last_hidden_state # (batch_size, L, hidden_size)
+    
+    all_means = []
+    all_embs = []
+    for i in tqdm(range(0, len(sentences), BATCH_SIZE)):
+        chunk = sentences[i: i+BATCH_SIZE]
+        enc = tokenizer(
+            chunk,
+            padding="max_length",
+            truncation=True,
+            max_length=MAX_LENGTH,
+            return_tensors="pt"
+        )
+        input_ids = enc["input_ids"].to(device)
+        attention_mask = enc["attention_mask"].to(device)
+        with torch.no_grad():
+            out = model(input_ids=input_ids, attention_mask=attention_mask)
+            embs = out.last_hidden_state #(B, L, H)
 
-    print("multiplying attention masks")
-    attention_mask = attention_mask.unsqueeze(-1) #(batch_size, L, 1)
-    sum_embs = (embs * attention_mask).sum(dim=1)
-    token_counts = attention_mask.sum(dim=1).clamp(min=1)
-    mean_embs = sum_embs / token_counts
-    return mean_embs, embs
+        attention_mask = attention_mask.unsqueeze(-1) #(B, L, 1)
+        sum_embs = (embs * attention_mask).sum(dim=1)
+        token_counts = attention_mask.sum(dim=1).clamp(min=1)
+        mean_embs = sum_embs / token_counts
 
+        all_means.append(mean_embs.cpu())
+        all_embs.append(embs.cpu())
+
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+
+
+    final_mean_embs = torch.cat(all_means, dim = 0)
+    final_all_embs = torch.cat(all_embs, dim = 0)
+    print(f"mean_embs shape: {final_mean_embs.shape} should be (num_descs, 768)")
+    print(f"mean_embs shape: {final_all_embs.shape} should be (num_descs,128,  768)")
+    return final_mean_embs, final_all_embs
 
 if __name__ == "__main__":
     descriptions_all = read_cached_array(RESULT_FILES["descriptions"])
     # keep_descriptions_having_silver_spans(descriptions_all)
-
     tokenizer =BertTokenizerFast.from_pretrained('bert-base-cased')
-    model = BertModel.from_pretrained('bert-base-cased')
+    model = BertModel.from_pretrained('bert-base-cased').to(device)
+    model.eval()
     sentences = list(descriptions_all.values())
     h_gs, embs = get_hgs(sentences, tokenizer, model)
+    print(f" we have: {len(descriptions_all)} descs")
     assert embs.shape[0] == len(descriptions_all)
+    assert h_gs.shape[0] == len(descriptions_all)
     assert embs.shape[1] == MAX_LENGTH
     save_tensor(h_gs, RESULT_FILES["embs"]["hgs"])
     save_tensor(embs, RESULT_FILES["embs"]["embs"])

@@ -1,5 +1,5 @@
 
-NUM_WORKERS = 5
+NUM_WORKERS = 100
 L = desc_max_len = 128
 USE_CACHE=  False
 
@@ -84,17 +84,17 @@ def split_list(data, num_chunks):
 
 
 
-_shared_aliases = None
-_shared_triples = None
+_shared_heads_aliases = None
+_shared_tails_aliases = None
 _shared_tokenizer = None
 _shared_aliases_pattern_map = None
 
-def init_globals(aliases_, triples_,aliases_pattern_map_):
+def init_globals(aliases_pattern_map_, heads_aliases_, tails_aliases_):
     print("intiiating globals")
-    global _shared_aliases, _shared_triples,_shared_tokenizer,_shared_aliases_pattern_map
-    _shared_aliases = aliases_
+    global _shared_tokenizer,_shared_aliases_pattern_map,  _shared_heads_aliases, _shared_tails_aliases
+    _shared_heads_aliases = heads_aliases_
+    _shared_tails_aliases = tails_aliases_
     _shared_aliases_pattern_map = aliases_pattern_map_
-    _shared_triples = triples_
     _shared_tokenizer = BertTokenizerFast.from_pretrained('bert-base-cased')
     
     print("finsihed initiating")
@@ -103,32 +103,7 @@ def init_globals(aliases_, triples_,aliases_pattern_map_):
 def worker(descs_chunk):
     descs_ids_chunk = list(descs_chunk.keys())
     print(f"new cpu worker proccessing {len(descs_ids_chunk)}")
-    triples_keys = list(_shared_triples.keys())
 
-    calculated =  os.path.exists(TEMP_FILES["heads_aliases"]) and  os.path.exists(TEMP_FILES["tails_aliases"]) and  os.path.exists(TEMP_FILES["aliases_patterns"])
-    if USE_CACHE and calculated:
-        heads_aliases = read_cached_array(TEMP_FILES["heads_aliases"])
-        tails_aliases = read_cached_array(TEMP_FILES["tails_aliases"])
-
-    else:
-        tails_aliases = {}
-        heads_aliases = {}
-        #after this:
-        # heads_aliases will contain a dictionary where keys are descriptions id and values is a list, each item in the list is a list of aliases 
-        # for example heads_aliases["q1"] = [  ["als_1_1", "als_1_2"]  ]
-        # for example tails_aliases["q1"] = [  ["als_2_1", "als_2_2"], ["als_3_1", "als_3_2"]  ]
-        for d_id in tqdm(descs_ids_chunk, total=len(descs_ids_chunk), desc="processing descs ids"):
-            heads_aliases[d_id] = []
-            tails_aliases[d_id] = []
-
-            heads_aliases[d_id].append(_shared_aliases[d_id])
-            if d_id in triples_keys:
-                for _, _, t in _shared_triples[d_id]:
-                    tails_aliases[d_id].append(_shared_aliases[t])
-
-
-        cache_array(heads_aliases, TEMP_FILES["heads_aliases"])
-        cache_array(tails_aliases, TEMP_FILES["tails_aliases"])
 
 
     BATCH_SIZE = len(descs_chunk)
@@ -139,20 +114,16 @@ def worker(descs_chunk):
 
     descs_texts = list(descs_chunk.values())
 
-    if USE_CACHE and  os.path.exists(TEMP_FILES["sentences_tokens"]):
-        enc = read_cached_array(TEMP_FILES["sentences_tokens"])
-    else:
-        enc = _shared_tokenizer(
-                descs_texts,
-                return_offsets_mapping=True,
-                add_special_tokens = False,
-                return_attention_mask=False,
-                return_token_type_ids=False,
-                padding="max_length",
-                truncation=True,
-                max_length=L
-            )
-        cache_array(enc, TEMP_FILES["sentences_tokens"])
+    enc = _shared_tokenizer(
+            descs_texts,
+            return_offsets_mapping=True,
+            add_special_tokens = False,
+            return_attention_mask=False,
+            return_token_type_ids=False,
+            padding="max_length",
+            truncation=True,
+            max_length=L
+        )
 
     all_sentences_offsets = enc.offset_mapping
     all_sentences_tokens = [enc_obj.tokens for enc_obj in enc.encodings ]
@@ -161,8 +132,8 @@ def worker(descs_chunk):
         description_text = descs_texts[sen_idx]
         description_tokens_offset = all_sentences_offsets[sen_idx]
 
-        description_heads_aliases = heads_aliases[sen_id]
-        description_tails_aliases = tails_aliases[sen_id]
+        description_heads_aliases = _shared_heads_aliases[sen_id]
+        description_tails_aliases = _shared_tails_aliases[sen_id]
 
 
         for head_als_list in description_heads_aliases:
@@ -201,15 +172,14 @@ def worker(descs_chunk):
     return  silver_spans_head_s, silver_spans_head_e, silver_spans_tail_s, silver_spans_tail_e,all_sentences_tokens, descs_ids_chunk
 
 def get_tailsHeadsAliases_aliasesPatternMap():
-
     if USE_CACHE and  os.path.exists(TEMP_FILES["results_spans"]):
         results = read_cached_array(TEMP_FILES["results_spans"])
     else:
         print("reading dicts")
         full_descs_dict = read_cached_array(RESULT_FILES["descriptions"])
-        aliases = read_cached_array(RESULT_FILES["aliases"])
         aliases_patterns_map = read_cached_array(RESULT_FILES["alias_patterns"])
-        triples = read_cached_array(RESULT_FILES["triples"])
+        heads_aliases = read_cached_array(TEMP_FILES["heads_aliases"])
+        tails_aliases = read_cached_array(TEMP_FILES["tails_aliases"])
 
         print("splitting chunks")
         full_descs_ids = list(full_descs_dict.keys())
@@ -217,7 +187,7 @@ def get_tailsHeadsAliases_aliasesPatternMap():
         print("chunks have been splitted")
         descriptions_chunks = [{k: full_descs_dict[k] for k in chunk} for chunk in chunks]
         print("splitting into processes")
-        with Pool(processes=NUM_WORKERS, initializer=init_globals, initargs=(aliases, triples, aliases_patterns_map)) as pool:
+        with Pool(processes=NUM_WORKERS, initializer=init_globals, initargs=( aliases_patterns_map, heads_aliases, tails_aliases)) as pool:
             results = pool.map(worker, descriptions_chunks)
         cache_array(results, TEMP_FILES["results_spans"])
 
