@@ -171,7 +171,7 @@ def get_hgs(sentences, tokenizer, model):
 
 if __name__ == "__main__":
     descriptions_all = read_cached_array(RESULT_FILES["descriptions"])
-    # keep_descriptions_having_silver_spans(descriptions_all)
+    keep_descriptions_having_silver_spans(descriptions_all)
     tokenizer =BertTokenizerFast.from_pretrained('bert-base-cased')
     model = BertModel.from_pretrained('bert-base-cased').to(device)
     model.eval()

@@ -724,19 +724,19 @@ def prep_heads_tails_aliases():
 
 if __name__ == "__main__":
     
-    # if device_str == "cpu":
-        # prepare_main_cpu_1(.00005)
-        # prepare_main_cpu_2()
-    # else:
-        # print("**********************CUDA*********")
-        # prepare_main(0.005)
+    if device_str == "cpu":
+        prepare_main_cpu_1(.00005)
+        prepare_main_cpu_2()
+    else:
+        print("**********************CUDA*********")
+        prepare_main(0.005)
 
-    # save_strange_chars_dict()
-    # save_stop_words()
-    # normalize_descriptions()
-    # prep_relations_main()
+    save_strange_chars_dict()
+    save_stop_words()
+    normalize_descriptions()
+    prep_relations_main()
 
-    # normalize_aliases()
-    # create_alias_patterns_map()
-    # do_transe_triples()
+    normalize_aliases()
+    create_alias_patterns_map()
+    do_transe_triples()
     prep_heads_tails_aliases()
