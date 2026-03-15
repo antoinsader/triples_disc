@@ -25,3 +25,25 @@ After reading the files (from pickle files) or convert them into dicts, we start
 
 
 
+**normalize_descriptions() function**:
+Reads the descriptions dict and perform normalization which performing for each description value:
+- Replace special chars (e.g replace ŏǒôốộồổỗöȫȯȱọőȍòỏơớợờởỡȏōṓṑǫǭõṍṏȭǿøɔ to o)
+- Keep only enlglish looking words using r"^[A-Za-z0-9.,!?;:'\"()\-]+$"
+-  Unicode NFKC normalization 
+- Collapse multiple spaces, strip 
+- **Does NOT lowercase**
+- **Does NOT remove stop words**
+
+
+**normalize_aliases() function**:
+Reads the aliases dict and for each alias in the aliases list do:
+
+- Replace special chars
+- Keep only english-looking words
+- NFKC normalization
+- Collapse multiple spaces
+- Lowercase
+- Remove stop words
+- Remove duplicates from list of aliases of one entity_id
+
+
