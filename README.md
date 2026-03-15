@@ -17,6 +17,9 @@ The project report is available at [REPORT](docs/report.pdf)
     curl -L -o wikidata5m_transductive.tar.gz "https://www.dropbox.com/s/6sbhm0rwo4l73jq/wikidata5m_transductive.tar.gz?dl=1" && gunzip wikidata5m_transductive.tar.gz && tar -xvf wikidata5m_transductive.
 ```
 
+## Codebase:
+The first version of the code exists inside **/archive**, now I am refactoring the steps in the root file. The new code for the training pipeline is not totally ready, the old code of archive worked but only using big GPU RAM and using pytorch ddp, that's the main reason of the refactoring process.
+
 ## Do the training:
 
 ** 1- Minimize **:
