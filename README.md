@@ -19,6 +19,14 @@ The project report is available at [REPORT](docs/report.pdf)
 
 ## File overview:
 
+### 0_prepare.py
+This script will convert raw text files installed into organized pickle files that we will use after
+
+
+### minimize.py:
+The data is huge to train on normal computers, if you want to minimize it, you can use this file, you can set the MINIMIZE_FACTOR at the top of the file
+
+
 ### 1_prep.py
 Preparing files for training
 

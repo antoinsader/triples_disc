@@ -19,7 +19,7 @@ if device_str == 'cpu':
     RELATIONS_BATCH_SIZE = 32
     DESCRIPTIONS_MAX_LENGTH = 128
     ON_UNIX = False
-    
+
 
 else:
     NUM_WORKERS = 48
