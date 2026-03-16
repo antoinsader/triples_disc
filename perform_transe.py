@@ -50,8 +50,8 @@ class TransEDataset(Dataset):
         triples_dict = data_loader.get_triples_train(minimized=minimized)
         flat_triples = [t for ts in triples_dict.values() for t in ts]
 
-        entity_ids = sorted({h for h, r, t in flat_triples} | {t for h, r, t in flat_triples})
-        relation_ids = sorted({r for h, r, t in flat_triples})
+        entity_ids = sorted({h for h, _, _ in flat_triples} | {t for _, _, t in flat_triples})
+        relation_ids = sorted({r for _, r, _ in flat_triples})
         self.ent2idx = {e: i for i, e in enumerate(entity_ids)}
         self.rel2idx = {r: i for i, r in enumerate(relation_ids)}
         self.n_ents = len(entity_ids)
@@ -62,12 +62,21 @@ class TransEDataset(Dataset):
             dtype=np.int64,
         )
         # Pre-generate negative triples (corrupt head or tail randomly)
-        rng = np.random.default_rng(42)
-        corrupt_head = rng.integers(0, 2, size=len(self.triples), dtype=bool)
-        rand_ents = rng.integers(0, self.n_ents, size=len(self.triples), dtype=np.int64)
+        
+        #false to corrupt head, true to corrupt tail
+        mask = torch.randint(0,2, size=(len(self.triples),), dtype=torch.bool)
+        random_ents = torch.randint(0, self.n_ents, size=(len(self.triples), ), dtype=torch.int64)
+
         self.neg_triples = self.triples.copy()
-        self.neg_triples[corrupt_head, 0] = rand_ents[corrupt_head]
-        self.neg_triples[~corrupt_head, 2] = rand_ents[~corrupt_head]
+        self.neg_triples[~mask, 0] = random_ents[~mask]
+        self.neg_triples[mask, 2] = random_ents[mask]
+
+        # rng = np.random.default_rng(42)
+        # corrupt_head = rng.integers(0, 2, size=len(self.triples), dtype=bool)
+        # rand_ents = rng.integers(0, self.n_ents, size=len(self.triples), dtype=np.int64)
+        # self.neg_triples = self.triples.copy()
+        # self.neg_triples[corrupt_head, 0] = rand_ents[corrupt_head]
+        # self.neg_triples[~corrupt_head, 2] = rand_ents[~corrupt_head]
 
     def __len__(self):
         """Returns the number of training triples."""
@@ -244,10 +253,7 @@ def main():
         dist.destroy_process_group()
 
     if local_rank == 0:
-        out_path = os.path.join(
-            settings.FOLDERS.MINIMIZED_DIR if MINIMIZED else settings.FOLDERS.PREPROCESSED_DIR,
-            "transe_rel_embs.npz",
-        )
+        out_path = settings.MINIMIZED_FILES.TRANSE_MODEL_RESULTS if MINIMIZED else settings.PREPROCESSED_FILES.TRANSE_MODEL_RESULTS
         save_tensor(get_core_model().rel_embs.weight.data, out_path)
         print(f"Shape: {tuple(get_core_model().rel_embs.weight.data.shape)}  →  {out_path}")
 

@@ -46,4 +46,12 @@ Reads the aliases dict and for each alias in the aliases list do:
 - Remove stop words
 - Remove duplicates from list of aliases of one entity_id
 
+**do_transe_triples() function**:
+Prepare data for transe algorithm which will be performed in `2_transe.py`
+
+Perpared data will have:
+- triples: list of tuples (head_entity_id, relation_id, tail_entity_id)
+- neg_triples: doing the same size of triples but messing up the head_id and tail_id
+- n_rels: number of relations
+- n_ents: number of entities
 

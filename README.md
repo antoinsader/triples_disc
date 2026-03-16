@@ -20,9 +20,9 @@ The project report is available at [REPORT](docs/report.pdf)
 ## Codebase:
 The first version of the code exists inside **/archive**, now I am refactoring the steps in the root file. The new code for the training pipeline is not totally ready, the old code of archive worked but only using big GPU RAM and using pytorch ddp, that's the main reason of the refactoring process.
 
-## Do the training:
+## Training steps:
 
-** 1- Minimize **:
+**1- Minimize**:
 Wikidata5m is a huge dataset, so if you are running on low RAM, you need to minimize it so you can test the algorithm, that's why you can run minimize.py by: 
 
 ```
@@ -36,7 +36,7 @@ After when you execute other steps, the terminal will ask you if you want to per
 
 
 
-** 2- Normalize **:
+**2- Normalize**:
 
 Normalization cleans descriptions and aliases so they are ready for downstream NLP tasks. Run it with:
 
@@ -69,7 +69,7 @@ The normalized files overwrite the source `.pkl` files in `data/minimized/` or `
 
 
 
-** 3- Embed relations **:
+**3- Embed relations**:
 
 This step produces one 768-dimensional BERT embedding per relation, averaged across all its text aliases. Run it with:
 
@@ -93,3 +93,18 @@ It then warns you which file will be overwritten and asks for confirmation befor
 - `data/minimized/relation_embeddings.npz` (minimized)
 - `data/preprocessed/relation_embeddings.npz` (full dataset)
 
+
+**4- Perform TransE algorithm**
+TransE knowledge graph embedding model (Bordes et al. 2013).
+Learns entity and relation embeding by minimizing the scoring function of ```|| h + r - t ||``` to learn the relations of (head, relation, tail).
+
+- The training is detecting wheter LOCAL_RANK environment variable exists, which will be when using torchrun, to use **Torch Distributed Data Parallel - torch DDP**, and falls back to single-gpu or cpu when LOCAL_RANK does not exist
+
+- **Create the dataset**: We are creating **TransEDataset**, which will generate ent2idx, rel2idx (mapping from entities and relations to their idxs), n_ents, n_rels, triples, neg_triples (corrupted triples where head or tail is corrupted). the __getitem__ of the dataset will return tuple[torch tensor from triples, torch tensor from negative triples]. The dataset is inheriting from torch.utils.Dataset
+
+
+- Build the ```TransEModel```, with Adam as an ```optimizer``` and ```CosineAnnealingLR``` as scheduler. 
+
+- Training the model, where forward pass is computing L1 distances for positive and negative triple batches. and using with loss as  the mean of (MARGIN + pos_distance - neg_distance)
+
+- Save the model results in the file ```transe_rel_embs.npz``` with shape (n_relations, TRANSE_EMB_DIM)
