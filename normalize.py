@@ -41,7 +41,7 @@ def _normalize_aliases(aliases, strange_chars, stop_words):
 
 def _check_minimized_files():
     min_files = settings.MINIMIZED_FILES
-    missing = [p for p in [min_files.DESCRIPTIONS, min_files.ALIASES] if not os.path.isfile(p)]
+    missing = [p for p in [min_files.DESCRIPTIONS, min_files.ALIASES, min_files.TRIPLES_TRAIN, min_files.RELATIONS] if not os.path.isfile(p)]
     if missing:
         print("Minimized files not found. Run minimize.py first.")
         for p in missing:

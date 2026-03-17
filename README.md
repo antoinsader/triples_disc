@@ -108,3 +108,34 @@ Learns entity and relation embeding by minimizing the scoring function of ```|| 
 - Training the model, where forward pass is computing L1 distances for positive and negative triple batches. and using with loss as  the mean of (MARGIN + pos_distance - neg_distance)
 
 - Save the model results in the file ```transe_rel_embs.npz``` with shape (n_relations, TRANSE_EMB_DIM)
+
+
+**5- Prepare silver spans**:
+
+The objective of this step is to extract silver spans to be used in the training after.
+Silver spans are 4 types each is a torch tensor with shape (DESCRIPTIONS, MAX_LENGTH):
+- Head start silver spans: For each description there is an array containing as a value 1 if the token position is a **start of a head**, 0 otherwise
+- Head end silver spans: For each description there is an array containing as a value 1 if the token position is a **end of a head**, 0 otherwise
+- Tail start silver spans: For each description there is an array containing as a value 1 if the token position is a **start of a tail**, 0 otherwise
+- Tail end silver spans: For each description there is an array containing as a value 1 if the token position is a **end of a tail**, 0 otherwise
+
+Also in the results we have:
+- sentences_tokens: the tokens of each description
+- desc_ids: to map the indexes
+
+We are preparing the results by:
+- Create aliases regex pattern map: For each alias, a regex compiled pattern. To be used after for finding aliases inside descriptions texts.
+- Create descriptions_heads_aliases, descriptions_tails_aliases: where for each description, we extract the aliases of their heads and aliases of their tails
+- **Parallel processing** for description chunks to extract the spans using the previously prepared maps.
+- The result is saved in ```silver_spans.pkl``` file containing a dict with 6 keys {}
+
+```
+{
+    "silver_spans_head_start": tensor(N,L), 
+    "silver_spans_head_end": tensor(N,L), 
+    "silver_spans_tail_start": tensor(N,L), 
+    "silver_spans_tail_end": tensor(N,L), 
+    "sentences_tokens": list[list[str]], 
+    "desc_ids": list[str]
+}
+```

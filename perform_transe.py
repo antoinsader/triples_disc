@@ -10,12 +10,12 @@ from torch.utils.data import Dataset, DataLoader, DistributedSampler
 from torch.amp import autocast, GradScaler
 from tqdm import tqdm
 
+from normalize import _check_minimized_files
 from utils.files import save_tensor
 from utils.pre_processed_data import data_loader
 from utils.settings import settings
 
 
-MINIMIZED = True
 BATCH_SIZE = 256
 NUM_WORKERS = 4
 MARGIN = 1.0
@@ -181,6 +181,14 @@ def main():
     Output file shape: ``(n_rels, TRANSE_EMB_DIM)``, accessible via
     ``np.load(path)["arr"]``.
     """
+    answer = input("Perform transE algorithm on minimized dataset? [Y/n]: ").strip().lower()
+    use_minimized = answer != 'n'
+
+    if use_minimized and not _check_minimized_files():
+        return
+
+
+
     local_rank_str = os.environ.get("LOCAL_RANK")
     use_ddp = local_rank_str is not None
 
@@ -189,7 +197,7 @@ def main():
         torch.cuda.set_device(local_rank)
         dist.init_process_group(backend="nccl")
         device = torch.device(f"cuda:{local_rank}")
-        print(f"LOCAL RANK: {local_rank}")
+        print(f"Using DDP. LOCAL RANK: {local_rank}")
     else:
         local_rank = 0
         if torch.cuda.is_available():
@@ -198,7 +206,7 @@ def main():
             device = torch.device("cpu")
         print(f"Running on {device} (no DDP)")
 
-    dataset = TransEDataset(minimized=MINIMIZED)
+    dataset = TransEDataset(minimized=use_minimized)
     print(f"Dataset: {len(dataset):,} triples | {dataset.n_ents:,} entities | {dataset.n_rels:,} relations")
 
     if use_ddp:
@@ -223,6 +231,8 @@ def main():
 
     def get_core_model():
         return model.module if use_ddp else model
+
+    print(f"Starting training on {device}, use DDP: {use_ddp}, batch size: {BATCH_SIZE}, epochs: {NUM_EPOCHS}, learning rate: {LEARNING_RATE}")
 
     for epoch in tqdm(range(NUM_EPOCHS), total=NUM_EPOCHS, desc=f"Epochs [rank {local_rank}]"):
         model.train()
@@ -253,7 +263,7 @@ def main():
         dist.destroy_process_group()
 
     if local_rank == 0:
-        out_path = settings.MINIMIZED_FILES.TRANSE_MODEL_RESULTS if MINIMIZED else settings.PREPROCESSED_FILES.TRANSE_MODEL_RESULTS
+        out_path = settings.MINIMIZED_FILES.TRANSE_MODEL_RESULTS if use_minimized else settings.PREPROCESSED_FILES.TRANSE_MODEL_RESULTS
         save_tensor(get_core_model().rel_embs.weight.data, out_path)
         print(f"Shape: {tuple(get_core_model().rel_embs.weight.data.shape)}  →  {out_path}")
 

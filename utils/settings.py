@@ -36,11 +36,12 @@ class _PreprocessedFiles:
     TRIPLES_TEST: str = "triples_test.pkl"
     TRIPLES_VALID: str = "triples_valid.pkl"
     TRIPLES_TRAIN: str = "triples_train.pkl"
+
     RELATIONS_EMBEDDINGS: str = "relation_embeddings.npz"
     TRANSE_MODEL_RESULTS: str = "transe_rel_embs.npz"
-
+    SILVER_SPANS: str = "silver_spans.pkl"
     def __post_init__(self):
-        for attr in ["ALIASES", "RELATIONS", "DESCRIPTIONS", "TRIPLES_TEST", "TRIPLES_VALID", "TRIPLES_TRAIN", "RELATIONS_EMBEDDINGS", "TRANSE_MODEL_RESULTS"]:
+        for attr in ["ALIASES", "RELATIONS", "DESCRIPTIONS", "TRIPLES_TEST", "TRIPLES_VALID", "TRIPLES_TRAIN", "RELATIONS_EMBEDDINGS", "TRANSE_MODEL_RESULTS", "SILVER_SPANS"]:
             filename = getattr(self, attr)
             setattr(self, attr, os.path.join(self.preprocessed_dir, filename))
 
@@ -68,9 +69,10 @@ class _MinimizedFiles:
     TRIPLES_TRAIN: str = "triples_train.pkl"
     RELATIONS_EMBEDDINGS: str = "relation_embeddings.npz"
     TRANSE_MODEL_RESULTS: str = "transe_rel_embs.npz"
+    SILVER_SPANS: str = "silver_spans.pkl"
 
     def __post_init__(self):
-        for attr in ["ALIASES", "RELATIONS", "DESCRIPTIONS", "TRIPLES_TRAIN", "RELATIONS_EMBEDDINGS", "TRANSE_MODEL_RESULTS"]:
+        for attr in ["ALIASES", "RELATIONS", "DESCRIPTIONS", "TRIPLES_TRAIN", "RELATIONS_EMBEDDINGS", "TRANSE_MODEL_RESULTS", "SILVER_SPANS"]:
             filename = getattr(self, attr)
             setattr(self, attr, os.path.join(self.minimized_dir, filename))
 
