@@ -22,7 +22,10 @@ The first version of the code exists inside **/archive**, now I am refactoring t
 
 ## Training steps:
 
-**1- Minimize**:
+### **1- Minimize**:
+
+#### Objective and run:
+
 Wikidata5m is a huge dataset, so if you are running on low RAM, you need to minimize it so you can test the algorithm, that's why you can run minimize.py by: 
 
 ```
@@ -34,9 +37,15 @@ After it runs 4 streaming passes (triples, descriptions, relations, aliases) and
 
 After when you execute other steps, the terminal will ask you if you want to perform the operations on the minimized version or the full dataset.
 
+#### Output:
+Parsed full dictionaries files if not cached for desecriptions, triples, relations, aliases
+Minimized files for descriptions, triples, relations, aliases
 
 
-**2- Normalize**:
+
+### **2- Normalize**:
+
+#### Objective and run:
 
 Normalization cleans descriptions and aliases so they are ready for downstream NLP tasks. Run it with:
 
@@ -48,6 +57,7 @@ The script will ask whether to normalize the minimized dataset or the full datas
 
 It then warns you which files will be overwritten and asks for confirmation before proceeding.
 
+#### Details:
 Normalization steps applied to each value in **descriptions** dictionary:
 - Replace special characters with their equivalent (e.g. `á→a`, `é→e`, `&→and`)
 - Remove words that contain non-English characters
@@ -65,21 +75,26 @@ Normalization steps applied to each list of **aliases**:
 - Lowercase the result
 - Deduplicate aliases per entity
 
-The normalized files overwrite the source `.pkl` files in `data/minimized/` or `data/preprocessed/` depending on the choice made.
+
+#### Output:
+Overwrite aliases and descriptions files with normalized content.
 
 
+### **3- Embed relations**:
 
-**3- Embed relations**:
+#### Objective and run:
 
-This step produces one 768-dimensional BERT embedding per relation, averaged across all its text aliases. Run it with:
+This step produces one 768-dimensional BERT embedding per relation, averaged across all its text aliases, in order to use those embeddings in perform_transe file where we are performing transE algorithm on the relations. Run it with:
 
 ```
 python embed_relations.py
 ```
 
 The script will ask whether to embed the minimized or the full dataset (default: minimized). If the source `relations.pkl` file is missing, it will prompt you to run the appropriate prior step first.
-
 It then warns you which file will be overwritten and asks for confirmation before proceeding.
+
+
+#### Details:
 
 **Embedding approach:**
 - Loads `bert-base-cased` at runtime (not at import time) and moves it to GPU if available
@@ -89,30 +104,47 @@ It then warns you which file will be overwritten and asks for confirmation befor
 - Uses `torch.autocast` for mixed-precision (float16 on CUDA, bfloat16 on CPU)
 - Relations with no aliases fall back to using the relation ID itself as input text
 
-**Output:** a compressed `.npz` file of shape `(n_relations, 768)` saved to:
-- `data/minimized/relation_embeddings.npz` (minimized)
-- `data/preprocessed/relation_embeddings.npz` (full dataset)
+#### Output:
+
+a compressed `.npz` file of shape `(n_relations, 768)` saved to `relation_embeddings.npz`
 
 
-**4- Perform TransE algorithm**
+
+### **4- Perform TransE algorithm**
+
+#### Objective and run:
 TransE knowledge graph embedding model (Bordes et al. 2013).
 Learns entity and relation embeding by minimizing the scoring function of ```|| h + r - t ||``` to learn the relations of (head, relation, tail).
+
+```
+python perform_transe.py
+```
+
+#### Details:
 
 - The training is detecting wheter LOCAL_RANK environment variable exists, which will be when using torchrun, to use **Torch Distributed Data Parallel - torch DDP**, and falls back to single-gpu or cpu when LOCAL_RANK does not exist
 
 - **Create the dataset**: We are creating **TransEDataset**, which will generate ent2idx, rel2idx (mapping from entities and relations to their idxs), n_ents, n_rels, triples, neg_triples (corrupted triples where head or tail is corrupted). the __getitem__ of the dataset will return tuple[torch tensor from triples, torch tensor from negative triples]. The dataset is inheriting from torch.utils.Dataset
-
-
 - Build the ```TransEModel```, with Adam as an ```optimizer``` and ```CosineAnnealingLR``` as scheduler. 
-
 - Training the model, where forward pass is computing L1 distances for positive and negative triple batches. and using with loss as  the mean of (MARGIN + pos_distance - neg_distance)
 
-- Save the model results in the file ```transe_rel_embs.npz``` with shape (n_relations, TRANSE_EMB_DIM)
+
+#### Output
+Save the model results in the file ```transe_rel_embs.npz``` with shape (n_relations, TRANSE_EMB_DIM)
 
 
-**5- Prepare silver spans**:
+### **5- Prepare silver spans**:
+
+#### Objective and run:
 
 The objective of this step is to extract silver spans to be used in the training after.
+The script can be used also to filter descriptions to only those having at least one value in the silver spans.
+
+### Details:
+
+The scripts at first prompts the user if to use minimized dataset or the normal one.
+After the script is finished from extracting and saving silver spans, it will prompt if to filter the descriptions
+
 Silver spans are 4 types each is a torch tensor with shape (DESCRIPTIONS, MAX_LENGTH):
 - Head start silver spans: For each description there is an array containing as a value 1 if the token position is a **start of a head**, 0 otherwise
 - Head end silver spans: For each description there is an array containing as a value 1 if the token position is a **end of a head**, 0 otherwise
@@ -127,15 +159,25 @@ We are preparing the results by:
 - Create aliases regex pattern map: For each alias, a regex compiled pattern. To be used after for finding aliases inside descriptions texts.
 - Create descriptions_heads_aliases, descriptions_tails_aliases: where for each description, we extract the aliases of their heads and aliases of their tails
 - **Parallel processing** for description chunks to extract the spans using the previously prepared maps.
-- The result is saved in ```silver_spans.pkl``` file containing a dict with 6 keys {}
+
+
+#### Output:
+
+- The result is saved in ```silver_spans.pkl``` file containing a dict with 6 keys
 
 ```
 {
-    "silver_spans_head_start": tensor(N,L), 
-    "silver_spans_head_end": tensor(N,L), 
-    "silver_spans_tail_start": tensor(N,L), 
-    "silver_spans_tail_end": tensor(N,L), 
+    "head_start": tensor(N,L), 
+    "head_end": tensor(N,L), 
+    "tail_start": tensor(N,L), 
+    "tail_end": tensor(N,L), 
     "sentences_tokens": list[list[str]], 
     "desc_ids": list[str]
 }
 ```
+    Where N is the number of descriptions, L is the maximum_length for the tokenizer
+
+- Overwrite desceriptions file if approved by user.
+
+
+

@@ -10,9 +10,8 @@ from torch.utils.data import Dataset, DataLoader, DistributedSampler
 from torch.amp import autocast, GradScaler
 from tqdm import tqdm
 
-from normalize import _check_minimized_files
 from utils.files import save_tensor
-from utils.pre_processed_data import data_loader
+from utils.pre_processed_data import data_loader, check_minimized_files
 from utils.settings import settings
 
 
@@ -184,7 +183,7 @@ def main():
     answer = input("Perform transE algorithm on minimized dataset? [Y/n]: ").strip().lower()
     use_minimized = answer != 'n'
 
-    if use_minimized and not _check_minimized_files():
+    if use_minimized and not check_minimized_files():
         return
 
 

@@ -5,17 +5,17 @@ import nltk
 from tqdm import tqdm
 
 from utils.files import cache_array, read_cached_array
-from utils.settings import settings
+from utils.settings import _MinimizedFiles, _PreprocessedFiles, settings
 
 
 class RawDataLoader:
     """Parses raw .txt files into dicts and caches them as .pkl files.
     On subsequent calls, loads directly from the .pkl cache."""
 
-    def __init__(self, raw_files, preprocessed_files, minimized_files):
+    def __init__(self, raw_files, preprocessed_files:_PreprocessedFiles, minimized_files: _MinimizedFiles):
         self.raw = raw_files
-        self.pkl = preprocessed_files
-        self.min = minimized_files
+        self.pkl :_PreprocessedFiles= preprocessed_files
+        self.min: _MinimizedFiles = minimized_files
 
     # ------------------------------------------------------------------ #
     # Private parsers (raw .txt → dict)
@@ -68,6 +68,8 @@ class RawDataLoader:
     def _get(self, pkl_fp, raw_fp, parser):
         if os.path.isfile(pkl_fp):
             return read_cached_array(pkl_fp)
+        if raw_fp is None or parser is None:
+            raise ValueError(f"No raw file or parser provided for {pkl_fp}, and cache not found.")
         print(f"Cache not found, parsing from raw: {raw_fp}")
         data = parser(raw_fp)
         cache_array(data, pkl_fp)
@@ -103,6 +105,12 @@ class RawDataLoader:
         if minimized:
             return self._get_minimized(self.min.RELATIONS)
         return self._get(self.pkl.RELATIONS, self.raw.RELATIONS, self._parse_relations)
+
+    def get_silver_spans(self, minimized=False) -> dict:
+        if minimized:
+            return self._get_minimized(self.min.SILVER_SPANS)
+        return self._get(self.pkl.SILVER_SPANS, None, None)
+
 
     def cache_all(self):
         """Parse and cache every dataset. Skips files already cached."""
@@ -171,3 +179,31 @@ class HelpersData:
 # Module-level singletons — safe to import anywhere, no side effects on load.
 data_loader = RawDataLoader(settings.RAW_FILES, settings.PREPROCESSED_FILES, settings.MINIMIZED_FILES)
 helpers_data = HelpersData(settings.HELPERS_FILES)
+
+
+def check_minimized_files():
+    min_files = settings.MINIMIZED_FILES
+    missing = [p for p in [min_files.DESCRIPTIONS, min_files.ALIASES, min_files.TRIPLES_TRAIN, min_files.RELATIONS] if not os.path.isfile(p)]
+    if missing:
+        print("Minimized files not found. Run minimize.py first.")
+        for p in missing:
+            print(f"  Missing: {p}")
+        return False
+    return True
+
+def check_preprocessed_files():
+    files = settings.PREPROCESSED_FILES
+    missing = [p for p in [files.DESCRIPTIONS, files.ALIASES, files.TRIPLES_TRAIN, files.RELATIONS] if not os.path.isfile(p)]
+    if missing:
+        print("Preprocessed files not found. Run any script with choosing no for minimization to generate them.")
+        for p in missing:
+            print(f"  Missing: {p}")
+        return False
+    return True
+
+def check_files(use_minimized=False):
+    if use_minimized:
+        return check_minimized_files()
+
+    return check_preprocessed_files()
+

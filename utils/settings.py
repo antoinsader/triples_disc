@@ -40,8 +40,24 @@ class _PreprocessedFiles:
     RELATIONS_EMBEDDINGS: str = "relation_embeddings.npz"
     TRANSE_MODEL_RESULTS: str = "transe_rel_embs.npz"
     SILVER_SPANS: str = "silver_spans.pkl"
+
+    DESCRIPTION_EMBEDDINGS_ALL: str = "description_embeddings_all.npz"
+    DESCRIPTION_EMBEDDINGS_MEAN: str = "description_embeddings_mean.npz"
+    DESCRIPTION_EMBEDDINGS_IDS : str = "description_embeddings_ids.pkl"
+
     def __post_init__(self):
-        for attr in ["ALIASES", "RELATIONS", "DESCRIPTIONS", "TRIPLES_TEST", "TRIPLES_VALID", "TRIPLES_TRAIN", "RELATIONS_EMBEDDINGS", "TRANSE_MODEL_RESULTS", "SILVER_SPANS"]:
+        for attr in ["ALIASES", 
+                     "RELATIONS",
+                     "DESCRIPTIONS",
+                     "TRIPLES_TEST",
+                     "TRIPLES_VALID",
+                     "TRIPLES_TRAIN",
+                     "RELATIONS_EMBEDDINGS",
+                     "TRANSE_MODEL_RESULTS",
+                     "SILVER_SPANS",
+                     "DESCRIPTION_EMBEDDINGS_ALL",
+                     "DESCRIPTION_EMBEDDINGS_MEAN",
+                     "DESCRIPTION_EMBEDDINGS_IDS"]:
             filename = getattr(self, attr)
             setattr(self, attr, os.path.join(self.preprocessed_dir, filename))
 
@@ -71,8 +87,21 @@ class _MinimizedFiles:
     TRANSE_MODEL_RESULTS: str = "transe_rel_embs.npz"
     SILVER_SPANS: str = "silver_spans.pkl"
 
+    DESCRIPTION_EMBEDDINGS_ALL: str = "description_embeddings_all.npz"
+    DESCRIPTION_EMBEDDINGS_MEAN: str = "description_embeddings_mean.npz"
+    DESCRIPTION_EMBEDDINGS_IDS : str = "description_embeddings_ids.pkl"
+
     def __post_init__(self):
-        for attr in ["ALIASES", "RELATIONS", "DESCRIPTIONS", "TRIPLES_TRAIN", "RELATIONS_EMBEDDINGS", "TRANSE_MODEL_RESULTS", "SILVER_SPANS"]:
+        for attr in ["ALIASES", 
+                     "RELATIONS", 
+                     "DESCRIPTIONS", 
+                     "TRIPLES_TRAIN",
+                     "RELATIONS_EMBEDDINGS",
+                     "TRANSE_MODEL_RESULTS",
+                     "SILVER_SPANS",
+                     "DESCRIPTION_EMBEDDINGS_ALL",
+                     "DESCRIPTION_EMBEDDINGS_MEAN",
+                     "DESCRIPTION_EMBEDDINGS_IDS"]:
             filename = getattr(self, attr)
             setattr(self, attr, os.path.join(self.minimized_dir, filename))
 

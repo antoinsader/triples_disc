@@ -180,10 +180,10 @@ def main(use_minimized: bool):
             desc_ids.extend(b_desc_ids)
 
         silver_spans_result = {
-            "silver_spans_head_start": torch.stack(silver_spans_head_start_ar, dim=0),
-            "silver_spans_head_end": torch.stack(silver_spans_head_end_ar, dim=0),
-            "silver_spans_tail_start": torch.stack(silver_spans_tail_start_ar, dim=0),
-            "silver_spans_tail_end": torch.stack(silver_spans_tail_end_ar, dim=0),
+            "head_start": torch.stack(silver_spans_head_start_ar, dim=0),
+            "head_end": torch.stack(silver_spans_head_end_ar, dim=0),
+            "tail_start": torch.stack(silver_spans_tail_start_ar, dim=0),
+            "tail_end": torch.stack(silver_spans_tail_end_ar, dim=0),
             "sentences_tokens": sentences_tokens,
             "desc_ids": desc_ids
         }
@@ -193,9 +193,50 @@ def main(use_minimized: bool):
         cache_array(silver_spans_result, out_path)
 
 
+def filter_descriptions(use_minimized: bool):
+    descriptions_all = data_loader.get_descriptions(minimized=use_minimized)
+    silver_spans_result = data_loader.get_silver_spans(minimized=use_minimized)
+    ss_h_s = silver_spans_result["head_start"]
+    ss_h_e = silver_spans_result["head_end"]
+    ss_t_s = silver_spans_result["tail_start"]
+    ss_t_e = silver_spans_result["tail_end"]
+    descs_ids = silver_spans_result["desc_ids"]
+    sentence_tokens = silver_spans_result["sentences_tokens"]
+
+    mask = (
+        ss_h_s.any(dim=1) |
+        ss_h_e.any(dim=1) |
+        ss_t_s.any(dim=1) |
+        ss_t_e.any(dim=1)
+    )
+    cleaned_desc_dict=  {
+        k: descriptions_all[k]
+        for k, keep in zip(descs_ids, mask)
+        if keep.item()
+    }
+    silver_spans_obj = {
+        "head_start": ss_h_s[mask],
+        "head_end": ss_h_e[mask],
+        "tail_start": ss_t_s[mask],
+        "tail_end": ss_t_e[mask],
+        "sentences_tokens": [sentence_tokens[i] for i, keep in enumerate(mask) if keep],
+        "desc_ids": [desc_id for desc_id, keep in zip(descs_ids, mask) if keep]
+    }
+
+    out_desc_path = settings.MINIMIZED_FILES.DESCRIPTIONS if use_minimized else settings.PREPROCESSED_FILES.DESCRIPTIONS
+    out_silver_spans_path = settings.MINIMIZED_FILES.SILVER_SPANS if use_minimized else settings.PREPROCESSED_FILES.SILVER_SPANS
+    print(f"we cleared  {len(descriptions_all) - len(cleaned_desc_dict)}/{len(descriptions_all)} descriptions, now we have {len(cleaned_desc_dict)} descriptions")
+
+    cache_array(cleaned_desc_dict, out_desc_path)
+    cache_array(silver_spans_obj, out_silver_spans_path)
 
 if __name__ == "__main__":
     answer = input("Extract silver spans from minimized dataset? [Y/n]: ").strip().lower()
     use_minimized = answer != 'n'
     main(use_minimized)
 
+    answer = input("Do you want to filter descriptions to keep only those having silver spans? [Y/n]: ").strip().lower()
+    if answer == "y":
+        answer = input("We will overwrite the descriptions file with the filtered one. Are you sure? [Y/n]: ").strip().lower()
+        if answer == "y":
+            filter_descriptions(use_minimized)

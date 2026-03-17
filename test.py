@@ -8,17 +8,17 @@ from utils.chunking import chunk_dict
 
 descriptions = {
     "Q1": "I am John Doe  from Honolulu, and I am living in Italy", 
+    "Q4": "Honolulu is a city in Utopia",
     "Q2": "Rome is the capital of Italy",
     "Q3": "Milan is a city in Italy, and Milan likes Rome",
-    "Q4": "Honolulu is a city in Utopia",
     "Q5": "Italy is a good country "
 }
 
 aliases = {
     "Q1": ["John Doe", "JD"],
+    "Q4": ["Honolulu", "Honhon city"],
     "Q2": ["Rome", "Roma"],
     "Q3": ["Milan", "Milano"],
-    "Q4": ["Honolulu", "Honhon city"],
 }
 
 relations = {
@@ -132,4 +132,20 @@ if __name__ == "__main__":
         print(f"tail ends: {silver_spans_tail_end_ar[d_idx]}")
         
 
+    mask = (
+        silver_spans_head_start.any(dim=1) |
+        silver_spans_head_end.any(dim=1) |
+        silver_spans_tail_start.any(dim=1) |
+        silver_spans_tail_end.any(dim=1)
+    )
+    new_descriptions = {
+        k: descriptions[k]
+        for k, keep in zip(desc_ids, mask)
+        if keep.item()
+    }
 
+    silver_spans_head_start = silver_spans_head_start[mask]
+    print(f"new descriptions: {new_descriptions}")
+    print(f"new silver spans head start: {silver_spans_head_start}")
+    print(f"we cleared  {len(descriptions) - len(new_descriptions)}/{len(descriptions)} descriptions, now we have {len(new_descriptions)} descriptions")
+    

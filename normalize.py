@@ -4,7 +4,7 @@ import unicodedata
 from tqdm import tqdm
 
 from utils.files import cache_array
-from utils.pre_processed_data import data_loader, helpers_data
+from utils.pre_processed_data import data_loader, helpers_data, check_minimized_files
 from utils.settings import settings
 
 
@@ -39,22 +39,12 @@ def _normalize_aliases(aliases, strange_chars, stop_words):
     return result
 
 
-def _check_minimized_files():
-    min_files = settings.MINIMIZED_FILES
-    missing = [p for p in [min_files.DESCRIPTIONS, min_files.ALIASES, min_files.TRIPLES_TRAIN, min_files.RELATIONS] if not os.path.isfile(p)]
-    if missing:
-        print("Minimized files not found. Run minimize.py first.")
-        for p in missing:
-            print(f"  Missing: {p}")
-        return False
-    return True
-
 
 def normalize():
     answer = input("Normalize minimized dataset? [Y/n]: ").strip().lower()
     use_minimized = answer != 'n'
 
-    if use_minimized and not _check_minimized_files():
+    if use_minimized and not check_minimized_files():
         return
 
     if use_minimized:
