@@ -52,7 +52,7 @@ def process_descriptions_chunk(description_chunk: dict, max_descriptions_length:
     desc_texts = list(description_chunk.values())
     enc = _TOKENIZER(
         desc_texts,
-        return_offsets_mapping=True,
+        return_offsets_mapping=False,
         add_special_tokens = False,
         return_attention_mask=False,
         return_token_type_ids = False,
@@ -61,48 +61,36 @@ def process_descriptions_chunk(description_chunk: dict, max_descriptions_length:
         max_length = L
     )
 
-    offsets = enc["offset_mapping"]
     tokens = [encoding.tokens for encoding in enc.encodings]
 
     for desc_idx, desc_id in tqdm(enumerate(descriptions_ids), total=len(descriptions_ids), desc="Extracting silver"):
         description = descriptions_texts[desc_idx]
-        description_tokens_offsets = offsets[desc_idx]
 
         description_heads_aliases = _DESCS_HEADS_ALIASES[desc_id]
         description_tails_aliases = _DESCS_TAILS_ALIASES[desc_id]
 
         for als_str in  description_heads_aliases:
             pattern = _ALIASES_PATTERNS_MAP[als_str]
-            m = pattern.search(description)
-            if not m: continue
-            start_char, end_char = m.span()
-            token_indices = [
-                i
-                for i, (s,e) in enumerate(description_tokens_offsets)
-                if (s < end_char and e > start_char)
-            ]
-            if len(token_indices) > 0:
-                head_start, head_end = token_indices[0], token_indices[-1]
-                silver_spans_head_start[desc_idx, head_start] = 1
-                silver_spans_head_end[desc_idx, head_end] = 1
-                break
+            for match in pattern.finditer(description):
+                char_start, char_end = match.span()
+                actual_char_end = char_end - 1
+                token_start_idx = enc.char_to_token(desc_idx, char_start)
+                token_end_idx = enc.char_to_token(desc_idx, actual_char_end)
+                if token_start_idx is not None and token_end_idx is not None:
+                    silver_spans_head_start[desc_idx, token_start_idx] = 1
+                    silver_spans_head_end[desc_idx, token_end_idx] = 1
 
         for als_str in description_tails_aliases:
             pattern = _ALIASES_PATTERNS_MAP[als_str]
-            m = pattern.search(description)
-            if not m: continue
-            start_char, end_char = m.span()
-            token_indices = [
-                i
-                for i, (s,e) in enumerate(description_tokens_offsets)
-                if (s < end_char and e > start_char)
-            ]
-            if len(token_indices) > 0:
-                tail_start, tail_end = token_indices[0], token_indices[-1]
-                if silver_spans_tail_start[desc_idx, tail_start] == 0 and silver_spans_tail_end[desc_idx, tail_end] == 0:
-                    silver_spans_tail_start[desc_idx, tail_start] = 1
-                    silver_spans_tail_end[desc_idx, tail_end] = 1
-                break
+            for match in pattern.finditer(description):
+                char_start, char_end = match.span()
+                actual_char_end = char_end - 1
+                token_start_idx = enc.char_to_token(desc_idx, char_start)
+                token_end_idx = enc.char_to_token(desc_idx, actual_char_end)
+                if token_start_idx is not None and token_end_idx is not None:
+                    silver_spans_tail_start[desc_idx, token_start_idx] = 1
+                    silver_spans_tail_end[desc_idx, token_end_idx] = 1
+
     return (silver_spans_head_start, silver_spans_head_end, silver_spans_tail_start, silver_spans_tail_end, tokens, descriptions_ids)
 
 
@@ -112,8 +100,8 @@ def create_aliases_patterns_map(aliases : dict) -> dict[str, re.Pattern]:
     for als_lst in tqdm(aliases.values(), desc="creating aliases patterns map"):
         for als_str in als_lst:
             escaped = re.escape(als_str)
-            flexible = escaped.replace(r'\ ', r'\s*')
-            pattern = rf"\b{flexible}\b"
+            flexible = escaped.replace(r'\ ', r'\s+')
+            pattern = rf"(?<!\w){flexible}(?!\w)"
             patterns_map[als_str] = re.compile(pattern, flags=re.IGNORECASE)
     del aliases
     return patterns_map

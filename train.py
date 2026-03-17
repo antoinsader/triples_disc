@@ -83,9 +83,43 @@ class BraskDataset(Dataset):
     def __len__(self):
         return self.N
 
+class DirectionEntityExtractor(torch.nn.Module):
+    pass
+
+
 class BraskModel(torch.nn.Module):
     def __init__(self):
         super(BraskModel, self).__init__()
+
+        # ! I should be careful about the span reconstructions because (the model predicts start and end independently):
+        # ! Multiple possible spans
+        # ! Overlapping spans
+        # ! Invalid spans (end < start)
+
+        # ! for loss I can do with 3 parameters instead of (Entity loss, forward loss, backward loss) do alpha with starting as 1 and tune after.
+
+        # ! in the algorithm , I have to do fusion (token emb, relation emb, entity emb (subject, object)):
+        # ! thie way the paper do the confusion is attention fusion (score =f(x_i, r, global_context)), we might want in the future do other fusion like gating which would be g = sigmoid(W[x_i, r]); h_i = g * x_i + (1-g) * r
+
+
+        # ! I can do relations smart pruning which is doing pre-processed cosine similarity between description and the relations, maybe not bert but something else (I am thinking sentemce transformers but not neccessarily, )
+        # ! After I can use it to decide which relations (top-k) to consider .
+        # ! +  positive relations from ground truth triples !!!.
+
+
+
+        # After prediction:
+        #     Generate candidate spans
+        #     Keep only spans that:
+        #     match aliases (exact or fuzzy)
+        #     This improves precision a lot
+        # DO NOT: force model to only predict aliases
+
+        # Circular traning:
+        #    1- train entity extractor first
+        #    2- frozen encoder - train relation extraction and forward extractor (goal : learn relation conditioning without noise )
+        # 3-  add backward extractor
+        # 4- final fine tuning 
 
 
         # 4 classifiers for head start, head end, tail start, tail end
