@@ -1,6 +1,7 @@
 
 import torch
 import os
+import torch.nn as nn
 
 from torch.utils.data import Dataset, DataLoader, DistributedSampler
 
@@ -83,13 +84,74 @@ class BraskDataset(Dataset):
     def __len__(self):
         return self.N
 
-class DirectionEntityExtractor(torch.nn.Module):
+class EntityExtractor(nn.Module):
+    """Which tokens could be the start/end of entities, regardless of relation?"""
+
+    def __init__(self, hidden_dim):
+        """Entity extraction module, predits head start end and tail start end"""
+        super().__init__()
+        self.forward_head_start = nn.Linear(hidden_dim, 1)
+        self.forward_head_end = nn.Linear(hidden_dim, 1)
+        self.backward_tail_start = nn.Linear(hidden_dim, 1)
+        self.backward_tail_end = nn.Linear(hidden_dim, 1)
+
+    def forward(self, X):
+        """Sigmoid activations for head_start, head_end, tail_start, tail_end Returns 4 tensors of shape (B, L) with values between 0 and 1"""
+        head_start = torch.sigmoid(self.forward_head_start(X))
+        head_end = torch.sigmoid(self.forward_head_end(X))
+        tail_start = torch.sigmoid(self.backward_tail_start(X))
+        tail_end = torch.sigmoid(self.backward_tail_end(X))
+        return head_start, head_end, tail_start, tail_end
+
+class SemanticRelationAttention(nn.Module):
+    """In paper 3.3.2. Semantic relation guidance: returning fine-grained sentence representatio
+    We introduce MLP, 
+    We introduce attention_emb_dim
+    
+    """
+
+
+
+    def __init__(self, hidden_dim, rel_dim, attention_dim=256):
+        """rel_dim is the dim of relation embeddings (might be 768 if bert, or other for transe)"""
+        super().__init__()
+        self.w_r = nn.Linear(rel_dim, attention_dim)
+        self.w_g = nn.Linear(hidden_dim, attention_dim)
+        self.w_x = nn.Linear(hidden_dim , attention_dim)
+
+        self.V  = nn.Linear(attention_dim, 1)
+
+
+    def forward(self, X, semantic_relation_embedding, tokens_mean_embedding):
+        """
+            X: (B, L, H) token embeddings
+            semantic_relation_embedding: (R, H)
+            tokens_mean_embedding: (B, H)
+        """
+        wx_xi = self.w_x(X) #(B, L, attention_dim)
+        wr_rj = self.w_r(semantic_relation_embedding) #(R, attention_dim)
+        wg_hg = self.w_g(tokens_mean_embedding) #(B, attention_dim)
+
+        x_exp = wx_xi.unsqueeze(1) #(B, 1, L, attention_dim)
+        r_exp = wr_rj.unsqueeze(0).unsqueeze(2) #(1, R, 1, attention_dim)
+        g_exp = wg_hg.unsqueeze(1).unsqueeze(2) #(B, 1, 1, attention_dim)
+
+
+        z = torch.tanh(x_exp + r_exp + g_exp) #(B, R, L, attention_dim)
+        e = self.V(z).squeeze(-1) #(B, R, L)
+
+        pass
+
+
+class TransERelationAttention(torch.nn.Module):
+
     pass
 
 
 class BraskModel(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, hidden_dim):
         super(BraskModel, self).__init__()
+
 
         # ! I should be careful about the span reconstructions because (the model predicts start and end independently):
         # ! Multiple possible spans
@@ -122,15 +184,26 @@ class BraskModel(torch.nn.Module):
         # 4- final fine tuning 
 
 
-        # 4 classifiers for head start, head end, tail start, tail end
-        # each classifier is linear (H -> 1) + sigmoid
-
+        
 
         # for predicted head and predicted tail:
         # entity representation = avg(X[start] + X[end]) / 2
-        
-        
-        pass
+
+        self.starting_entity = EntityExtractor(hidden_dim)
+
+
+    def __forward__(self, batch):
+
+
+        # B: batch size, L: sequence length, H: hidden dimension
+
+        description_embeddings = batch[0] # shape (B, L, H)
+        description_mean_embeddings = batch[1] # shape (B, H)
+
+        # shape (B, L)
+        silver_spans_head_start, silver_spans_head_end, silver_spans_tail_start, silver_spans_tail_end = batch[2], batch[3], batch[4], batch[5] 
+
+        forward_head_start, forward_head_end, backward_tail_start, backward_tail_end = self.starting_entity(description_embeddings)
 
 
 

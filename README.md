@@ -1,9 +1,16 @@
 
   
 
-# Triples extraction using BRASK
-Train neural network to extract triples (head, relation, tail) from wikidata5m dataset using [BRASK](docs/Bidirectional%20relation-guided%20attention%20network.pdf) algorithm.
-The project report is available at [REPORT](docs/report.pdf)
+# Wiki BRASK
+ train a model using BRASK ([Bidirectional relation-guided attention network with semantics and knowledge for relational triple extraction](https://www.sciencedirect.com/science/article/abs/pii/S0957417423004062)) on wikidata5m dataset to detect entity pairs with relations from sentences.
+  - I had scalability problems the first time I trained (/archive)[/archive] the model so now I am wokring on:
+  - (1) Improving project's architecture
+  - (2) Using PyTorch DDP (Distributed Data Parallel)
+  - (3) Using circular training (entity extraction, Relation extraction, backward extractor, final fine tuning)
+  - (4) Adding other useful pre-processing steps
+
+
+- The project report is available at [REPORT](docs/report.pdf)
 
 
 ## Training graph:
