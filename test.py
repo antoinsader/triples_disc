@@ -1,6 +1,7 @@
 from multiprocessing import Pool
 
 from numpy import c_
+from regex import T
 import torch
 
 from utils.chunking import chunk_dict
@@ -77,8 +78,7 @@ def test_parallel():
     print(f"res_nums: {res_nums}")
 
 
-if __name__ == "__main__":
-    # test_parallel()
+def test_silver_spans():
     from transformers import BertTokenizerFast
     from utils.chunking import chunk_dict
     from prepare_silver_spans import create_aliases_patterns_map, init_worker, process_descriptions_chunk, create_description_heads_tails_map_aliases
@@ -148,4 +148,123 @@ if __name__ == "__main__":
     print(f"new descriptions: {new_descriptions}")
     print(f"new silver spans head start: {silver_spans_head_start}")
     print(f"we cleared  {len(descriptions) - len(new_descriptions)}/{len(descriptions)} descriptions, now we have {len(new_descriptions)} descriptions")
-    
+
+
+def test_extract_sk():
+    # 2 SENTENCES, 5 TOKENS EACH. EMBEDDING SIZE 4
+    hidden_dim = 4
+    x = torch.tensor([
+        [
+            [1.0, 2.0, 3.0, 4.0],
+            [1.0, 3.0, 7.0, 1.0],
+            [7.0, 1.0, 2.0, 1.0],
+             [1.0, 3.0, 1.0, 1.0], 
+             [2.0, 1.0, 3.0, 1.0],
+        ],
+        [
+            [5.0, 4.0, 3.0, 4.0],
+            [2.0, 2.0, 5.0, 7.0],
+            [1.0, 2.0, 5.0, 4.0], [6.0, 3.0, 3.0, 7.0], [8.0, 1.0, 2.0, 1.0],
+    ],]
+    )
+    print(f"x shape: {x.shape} ")
+
+    head_start = torch.tensor([
+        [[0.6], [0.4], [0.7], [0.9], [0.1]],
+        [[0.8], [0.3], [0.1], [0.8], [0.4]],
+    ])
+
+
+    head_end = torch.tensor([
+        [[0.5], [0.3], [0.6], [0.1], [0.2]],
+        [[0.1], [0.4], [0.2], [0.3], [0.9]],
+    ])
+
+
+    correct_spans = [
+        [(0, 0), (2,2), ],
+        [(3,4)]
+    ]
+
+
+
+    threshold_head_start = 0.5
+    threshold_head_end = 0.5
+    max_span_len = 3
+
+    B = x.size(0)
+
+    forward_s_k = []
+    all_spans =[]
+    for b in range(B):
+        x_emb = x[b] #(5, 128)
+        start_idx  = (head_start[b].squeeze(-1) >= threshold_head_start).nonzero(as_tuple=False).squeeze(-1)
+        start_idx = torch.sort(start_idx).values
+        end_idx  = (head_end[b].squeeze(-1) >= threshold_head_end).nonzero(as_tuple=False).squeeze(-1)
+        consumed_ends = set()
+        spans = []
+        for s in start_idx:
+            # print("********")
+            # print(f"    start idx: {s}")
+            end_mask = ( (end_idx >= s) & (end_idx < s+max_span_len))
+            valid_ends = end_idx[end_mask]
+            # print(f"    valid_ends: {valid_ends}")
+            valid_ends = [e.item() for e in valid_ends if e.item() not in consumed_ends]
+            # print(f"    valid_ends: {valid_ends}")
+            if len(valid_ends) == 0:
+                continue
+            e = min(valid_ends)
+            spans.append((s.item(), e))
+            consumed_ends.add(e)
+        all_spans.append(spans)
+        s_k_list = []
+        for (s, e)  in spans:
+            print(f" start emb: {x_emb[s]}, end emb: {x_emb[e]}")
+            s_k = (x_emb[s] + x_emb[e]) / 2
+            s_k_list.append(s_k)
+        if s_k_list:
+            s_k_list = torch.stack(s_k_list, dim=0)
+        forward_s_k.append(s_k_list)
+    assert all_spans == correct_spans, f"extracted spans {all_spans} do not match the correct spans {correct_spans}"
+
+    print(f"forward_s_k: {forward_s_k}")
+    return forward_s_k
+
+def test_padding_sk(forward_s_k):
+    #forward s_k is a list where each element is tensor (num_subjects, H)
+    H = forward_s_k[0].shape[1]
+    max_num_subjects = max([s_k.shape[0] for s_k in forward_s_k])
+    padded_sk = []
+    mask = []
+    for s in forward_s_k:
+        K = s.shape[0]
+        if K < max_num_subjects:
+            pad = torch.zeros(max_num_subjects - K, H)
+            s_padded  = torch.cat([s, pad], dim=0)
+            m = torch.cat([torch.ones(K), torch.zeros(max_num_subjects - K)], dim=0)
+        else:
+            s_padded = s
+            m=torch.ones(K)
+
+        padded_sk.append(s_padded)
+        mask.append(m)
+    forward_s_k = torch.stack(padded_sk, dim=0) #(B, max_num_subjects, H)
+    forward_s_k_mask = torch.stack(mask, dim=0) #(B, max_num_subjects)
+    print(f"forward sk shape {forward_s_k.shape} : {forward_s_k}")
+    print(f"forward sk mask shape {forward_s_k_mask.shape} : {forward_s_k_mask}")
+    return forward_s_k, forward_s_k_mask
+
+def test_fuse_extractor(forward_s_k, forward_s_k_mask):
+    B, max_num_subjects, H = forward_s_k.shape
+    l = torch.nn.Linear(H, H)
+    new_sk = l(forward_s_k) #(B, max_num_subjects, H)
+    new_sk = forward_s_k_mask.unsqueeze(-1) * new_sk #(B, max_num_subjects, H) with padded subjects zeroed out
+    print(f"new sk shape {new_sk.shape} : {new_sk}")
+
+
+if __name__ == "__main__":
+    # test_parallel()
+    # test_silver_spans()
+    forward_s_k = test_extract_sk()
+    s_k, s_k_mask =  test_padding_sk(forward_s_k)
+    test_fuse_extractor(s_k, s_k_mask)
