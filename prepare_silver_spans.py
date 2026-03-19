@@ -11,12 +11,14 @@ from transformers import BertTokenizerFast
 
 
 
-from perform_transe import NUM_WORKERS
 from utils.files import cache_array
 from utils.settings import settings
 from utils.chunking import chunk_dict
 from utils.pre_processed_data import data_loader
 
+use_cuda = torch.cuda.is_available()
+device = torch.device("cuda" if use_cuda else "cpu")
+NUM_WORKERS = 4 if use_cuda else 0
 
 # For multiprocessing
 _TOKENIZER =None
@@ -127,7 +129,6 @@ def create_description_heads_tails_map_aliases(descriptions, triples, aliases):
 
 
 def main(use_minimized: bool):
-    NUM_WORKERS = 4
     max_descriptions_length = 128
     aliases_dict = data_loader.get_aliases(minimized=use_minimized)
     

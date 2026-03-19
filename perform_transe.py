@@ -15,8 +15,13 @@ from utils.pre_processed_data import data_loader, check_minimized_files
 from utils.settings import settings
 
 
-BATCH_SIZE = 256
-NUM_WORKERS = 4
+use_cuda = torch.cuda.is_available()
+device = torch.device("cuda" if use_cuda else "cpu")
+MAX_WORKERS = 4 if use_cuda else 0
+BATCH_SIZE = 512 if use_cuda else 256 
+
+
+
 MARGIN = 1.0
 TRANSE_EMB_DIM = 100
 LEARNING_RATE = 1e-3

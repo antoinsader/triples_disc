@@ -74,10 +74,15 @@ class EntityExtractor(nn.Module):
         self.end_linear = nn.Linear(hidden_dim, 1)
 
     def forward(self, X: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """Sigmoid activations for start, end Returns 2 tensors of shape (B, L) with values between 0 and 1"""
-        start = torch.sigmoid(self.start_linear(X))
-        end = torch.sigmoid(self.end_linear(X))
-        return start, end
+        """
+            X can be any shape (..., L, H).
+            Returns start_probs, end_probs, start_logits, end_logits each of shape (..., L, 1) — trailing H collapsed to scalar.
+        """
+        start_logits = self.start_linear(X)
+        end_logits = self.end_linear(X)
+        start = torch.sigmoid(start_logits)
+        end = torch.sigmoid(end_logits)
+        return start, end, start_logits, end_logits
 
 class RelationAttention(nn.Module):
     """In paper 3.3.2. Semantic relation guidance: returning fine-grained sentence representatio
@@ -318,7 +323,6 @@ class BraskModel(torch.nn.Module):
 
 
         # B: batch size, L: sequence length, H: hidden dimension
-
         description_embeddings = batch[0] # shape (B, L, H)
         description_mean_embeddings = batch[1] # shape (B, H)
         description_ids = batch[2] # shape (B,)
@@ -327,9 +331,9 @@ class BraskModel(torch.nn.Module):
 
 
 
-
-        forward_head_start, forward_head_end = self.forward_head_predict(description_embeddings)
-        backward_tail_start, backward_tail_end = self.backward_tail_predict(description_embeddings)
+        # ! I should be careful to not allow logits for [PAD]
+        forward_head_start_probs, forward_head_end_probs, f_head_start_logits, f_head_end_logits = self.forward_head_predict(description_embeddings)
+        backward_tail_start_probs, backward_tail_end_probs, b_tail_start_logits, b_tail_end_logits = self.backward_tail_predict(description_embeddings)
 
         forward_c, forward_a = self.semantic_relation_attention(description_embeddings, semantic_relation_embeddings, description_mean_embeddings)
         backward_c, backward_a = self.trane_relation_attention(description_embeddings, transe_relation_embeddings, description_mean_embeddings)
@@ -339,16 +343,16 @@ class BraskModel(torch.nn.Module):
         # ?! During training, should I train with my silver spans to extract_sk ? the gradients won't flow back through forward_head_start/end to the encoder. The paper trains subject extraction and object extraction jointly with a shared loss (Eq. 19).
         forward_sk, forward_sk_mask = extract_sk(
             description_embeddings=description_embeddings,
-            start_probs=forward_head_start,
-            end_probs=forward_head_end,
+            start_probs=forward_head_start_probs,
+            end_probs=forward_head_end_probs,
             start_threshold=self.threshold_head_start,
             end_threshold=self.threshold_head_end,
             max_span_length=self.max_span_len
             )
         backward_sk, backward_sk_mask = extract_sk(
             description_embeddings=description_embeddings,
-            start_probs=backward_tail_start,
-            end_probs=backward_tail_end,
+            start_probs=backward_tail_start_probs,
+            end_probs=backward_tail_end_probs,
             start_threshold=self.threshold_tail_start,
             end_threshold=self.threshold_tail_end,
             max_span_length=self.max_span_len
@@ -359,36 +363,45 @@ class BraskModel(torch.nn.Module):
         forward_hijk = self.fuse_extractor_forward(description_embeddings, forward_c, forward_sk, forward_sk_mask) # (B, R, max_num_subjects, L, H)
         backward_hijk = self.fuse_extractor_backward(description_embeddings, backward_c, backward_sk, backward_sk_mask) # (B, R, max_num_subjects, L, H)
 
+        B, R, S, L, H = forward_hijk.shape
+        _, _, forward_tails_start_logits, forward_tail_end_logits = self.forward_tail_predict(forward_hijk) # (B, R, S, L, 1)
 
-        # ?! Should I make the expansion of B,R,S,L,H ?
-        # B, R, S, L, H = forward_hijk.shape
-        # flat = forward_hijk.view(B * R * S, L, H)
-        # ts, te = self.forward_tail_predict(flat)         # (B*R*S, L, 1)
-        # forward_tail_start = ts.view(B, R, S, L)
-        # forward_tail_end   = te.view(B, R, S, L)
 
-        forward_tail_start, forward_tail_end = self.forward_tail_predict(forward_hijk)
-        backward_head_start, backward_head_end = self.backward_head_predict(backward_hijk)
+        _,_, backward_head_start_logits, backward_head_end_logits = self.backward_head_predict(backward_hijk) # (B, R, S, L, 1)
+
 
 
         return {
             "description_ids": description_ids,
             "froward": {
-                "head_start": forward_head_start,
-                "head_end": forward_head_end,
-                "tail_start": forward_tail_start,
-                "tail_end": forward_tail_end,
-                "forward_s_k_mask": forward_sk_mask 
+                "head_start_logits": f_head_start_logits,
+                "head_end_logits": f_head_end_logits,
+                "tail_start_logits": forward_tails_start_logits, # # (B, R, S, L, 1)
+                "tail_end_logits": forward_tail_end_logits, # # (B, R, S, L, 1)
+                "forward_s_k_mask": forward_sk_mask
             },
             "backward": {
-                "tail_start": backward_tail_start,
-                "tail_end": backward_tail_end,
-                "head_start": backward_head_start,
-                "head_end": backward_head_end,
+                "tail_start_logits": b_tail_start_logits, # # (B, R, S, L, 1)
+                "tail_end_logits": b_tail_end_logits, # # (B, R, S, L, 1)
+                "head_start_logits": backward_head_start_logits,
+                "head_end_logits": backward_head_end_logits,
                 "backward_s_k_mask": backward_sk_mask 
             }
         }
 
+def entity_extractor_loss(pred_logits, gold, token_mask, pos_weight=10.0):
+    """Using BCE loss
+    BCE explanation:
+    -----------
+    BCE answers the question, how wrong your probability prediction for a binary outcome?
+        - given p the predicted and y the true label
+        - when y =0 (answer should be 0) -> loss would be -log(1-p). then if p is low => loss would be  tiny saying that the answer is correct. if p is high => loss would be huge saying that we are wrong
+        - when y=1 (answer should be 1) -> loss would be -log(p). Then if p is low => loss would be high saying that we are wrong. if p is high => loss would tiny saying we are correct.
+    What is pos_weight:
+    -------------
+    
+    """
+    
 
 def loss_compute():
     # When you compute object predictions over padded subject slots, those slots should be masked out in the loss. Keep track of forward_sk_mask and backward_sk_mask and pass them to the loss function.

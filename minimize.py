@@ -62,9 +62,9 @@ def minimize():
     avg_tails_per_head = total_triples / len(candidates) if candidates else 1.0
 
     print(f"\nDataset overview:")
+    print(f"  Total train triples      : {total_triples:,}")
     print(f"  Total descriptions : {total_descs:,}")
     print(f"  Candidate heads    : {len(candidates):,}  (have at least one triple)")
-    print(f"  Total triples      : {total_triples:,}")
     print(f"  Avg tails per head : {avg_tails_per_head:.1f}")
 
     # ── Phase 2: interactive factor selection ─────────────────────────────
