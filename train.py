@@ -157,7 +157,7 @@ class FuseExtractor(nn.Module):
         Returns:
             h_ijk tensor with shape (B, R, max_num_subjects, L, H)
         """
-
+        gating = False
         R  = c.shape[1]
 
         X_exp = X.unsqueeze(1) #(B, 1, L, H)
@@ -170,8 +170,14 @@ class FuseExtractor(nn.Module):
         w_sk = sk_mask.unsqueeze(-1) * w_sk #(B, max_num_subjects, H) with padded subjects zeroed out
 
         h_ik = w_sk.unsqueeze(2) + w_x.unsqueeze(1) #(B, max_num_subjects, 1, H) + (B, 1, L, H) -> (B, max_num_subjects, L, H)
+
+
+
         h_ij = c_exp + X_exp # (B, R, 1, H) + (B, R, L, H) -> (B, R, L, H)
 
+        # if gating:
+        #     g = torch.sigmoid(W([x, c]))
+        #     h_ij = g * X_exp + (1 - g) * c_exp
 
         # I need (B, R, L, H)
         h_ijk = h_ik.unsqueeze(1) + h_ij.unsqueeze(2) # (B, 1, SUBJECT, L, H) + (B, R, 1, L, H ) -> (B, R, SUBJECT, L, H)
@@ -222,8 +228,8 @@ def extract_sk(description_embeddings: torch.Tensor,
             consumed_ends.add(e)
         s_k_list = []
         for (s, e)  in spans:
-            s_k = (x_emb[s] + x_emb[e]) / 2
-            s_k_list.append(s_k)
+            span_emb = (x_emb[s] + x_emb[e]) / 2
+            s_k_list.append(span_emb)
         if s_k_list:
             s_k_list = torch.stack(s_k_list, dim=0)
         if len(s_k_list) == 0:
@@ -330,6 +336,7 @@ class BraskModel(torch.nn.Module):
 
 
         # Extract sk
+        # ?! During training, should I train with my silver spans to extract_sk ? the gradients won't flow back through forward_head_start/end to the encoder. The paper trains subject extraction and object extraction jointly with a shared loss (Eq. 19).
         forward_sk, forward_sk_mask = extract_sk(
             description_embeddings=description_embeddings,
             start_probs=forward_head_start,
@@ -349,9 +356,16 @@ class BraskModel(torch.nn.Module):
 
 
 
-
         forward_hijk = self.fuse_extractor_forward(description_embeddings, forward_c, forward_sk, forward_sk_mask) # (B, R, max_num_subjects, L, H)
         backward_hijk = self.fuse_extractor_backward(description_embeddings, backward_c, backward_sk, backward_sk_mask) # (B, R, max_num_subjects, L, H)
+
+
+        # ?! Should I make the expansion of B,R,S,L,H ?
+        # B, R, S, L, H = forward_hijk.shape
+        # flat = forward_hijk.view(B * R * S, L, H)
+        # ts, te = self.forward_tail_predict(flat)         # (B*R*S, L, 1)
+        # forward_tail_start = ts.view(B, R, S, L)
+        # forward_tail_end   = te.view(B, R, S, L)
 
         forward_tail_start, forward_tail_end = self.forward_tail_predict(forward_hijk)
         backward_head_start, backward_head_end = self.backward_head_predict(backward_hijk)
@@ -364,15 +378,22 @@ class BraskModel(torch.nn.Module):
                 "head_end": forward_head_end,
                 "tail_start": forward_tail_start,
                 "tail_end": forward_tail_end,
+                "forward_s_k_mask": forward_sk_mask 
             },
             "backward": {
                 "tail_start": backward_tail_start,
                 "tail_end": backward_tail_end,
                 "head_start": backward_head_start,
                 "head_end": backward_head_end,
+                "backward_s_k_mask": backward_sk_mask 
             }
         }
 
+
+def loss_compute():
+    # When you compute object predictions over padded subject slots, those slots should be masked out in the loss. Keep track of forward_sk_mask and backward_sk_mask and pass them to the loss function.
+    
+    pass
 
 def main(use_minimized: bool):
     
@@ -431,3 +452,117 @@ if __name__ == "__main__":
     answer = input("Train on minimized dataset? [Y/n]: ").strip().lower()
     use_minimized = answer != 'n'
     main(use_minimized)
+
+
+
+#DRAFT LOSS:
+# def entity_loss(pred_start: torch.Tensor,
+#                 pred_end: torch.Tensor,
+#                 gold_start: torch.Tensor,
+#                 gold_end: torch.Tensor,
+#                 mask: torch.Tensor = None) -> torch.Tensor:
+#     """
+#     Binary cross-entropy loss for one entity extractor (Eqs. 20-21).
+
+#     Args:
+#         pred_start: (B, L) predicted start probabilities (after sigmoid)
+#         pred_end:   (B, L) predicted end probabilities (after sigmoid)
+#         gold_start: (B, L) binary ground-truth start labels {0, 1}
+#         gold_end:   (B, L) binary ground-truth end labels {0, 1}
+#         mask:       (B, L) float mask — 1 for real tokens, 0 for padding
+#     Returns:
+#         scalar loss
+#     """
+#     eps = 1e-8
+#     # BCE manually so we can apply mask
+#     def bce(pred, gold):
+#         loss = -(gold * torch.log(pred + eps) + (1 - gold) * torch.log(1 - pred + eps))
+#         if mask is not None:
+#             loss = loss * mask
+#             return loss.sum() / (mask.sum() + eps)
+#         return loss.mean()
+
+#     return bce(pred_start, gold_start) + bce(pred_end, gold_end)
+
+
+# def brask_loss(outputs: dict,
+#                gold_fwd_head_start: torch.Tensor,  # (B, L)
+#                gold_fwd_head_end: torch.Tensor,    # (B, L)
+#                gold_fwd_tail_start: torch.Tensor,  # (B, R, S, L)
+#                gold_fwd_tail_end: torch.Tensor,    # (B, R, S, L)
+#                gold_bwd_tail_start: torch.Tensor,  # (B, L)
+#                gold_bwd_tail_end: torch.Tensor,    # (B, L)
+#                gold_bwd_head_start: torch.Tensor,  # (B, R, S, L)
+#                gold_bwd_head_end: torch.Tensor,    # (B, R, S, L)
+#                fwd_sk_mask: torch.Tensor,          # (B, S) — from extract_sk
+#                bwd_sk_mask: torch.Tensor,          # (B, S)
+#                token_mask: torch.Tensor = None,    # (B, L) padding mask
+#                alpha: float = 1.0) -> torch.Tensor:
+#     """
+#     Total BRASK loss: L_total = sum(L_fwd + L_bwd)  [Eq. 18]
+
+#     L_fwd = L_sub + L_obj                           [Eq. 19]
+#     L_bwd = L'_obj + L'_sub                         (symmetric)
+
+#     Args:
+#         outputs:  dict returned by BraskModel.forward()
+#         alpha:    optional weighting between forward and backward losses
+#     """
+
+#     fwd = outputs["froward"]   # note: typo in your code "froward"
+#     bwd = outputs["backward"]
+
+#     # --- Forward: subject loss (Eq. 20-21) ---
+#     L_sub = entity_loss(
+#         fwd["head_start"].squeeze(-1),  # (B, L)
+#         fwd["head_end"].squeeze(-1),
+#         gold_fwd_head_start,
+#         gold_fwd_head_end,
+#         mask=token_mask
+#     )
+
+#     # --- Forward: object loss ---
+#     # fwd tail preds are (B, R, S, L) — mask out padded subject slots
+#     # expand sk_mask: (B, 1, S, 1) to broadcast over (B, R, S, L)
+#     B, R, S, L = fwd["tail_start"].shape
+#     obj_mask = fwd_sk_mask.unsqueeze(1).unsqueeze(-1).expand(B, R, S, L)  # (B, R, S, L)
+#     if token_mask is not None:
+#         obj_mask = obj_mask * token_mask.unsqueeze(1).unsqueeze(2)  # also mask padding
+
+#     L_obj = entity_loss(
+#         fwd["tail_start"],   # (B, R, S, L) — after reshape fix above
+#         fwd["tail_end"],
+#         gold_fwd_tail_start,
+#         gold_fwd_tail_end,
+#         mask=obj_mask
+#     )
+
+#     L_forward = L_sub + L_obj  # Eq. 19
+
+#     # --- Backward: object loss ---
+#     L_prime_obj = entity_loss(
+#         bwd["tail_start"].squeeze(-1),
+#         bwd["tail_end"].squeeze(-1),
+#         gold_bwd_tail_start,
+#         gold_bwd_tail_end,
+#         mask=token_mask
+#     )
+
+#     # --- Backward: subject loss ---
+#     obj_mask_bwd = bwd_sk_mask.unsqueeze(1).unsqueeze(-1).expand(B, R, S, L)
+#     if token_mask is not None:
+#         obj_mask_bwd = obj_mask_bwd * token_mask.unsqueeze(1).unsqueeze(2)
+
+#     L_prime_sub = entity_loss(
+#         bwd["head_start"],
+#         bwd["head_end"],
+#         gold_bwd_head_start,
+#         gold_bwd_head_end,
+#         mask=obj_mask_bwd
+#     )
+
+#     L_backward = L_prime_obj + L_prime_sub  # symmetric to Eq. 19
+
+#     L_total = L_forward + alpha * L_backward  # Eq. 18
+#     return L_total, {"L_sub": L_sub, "L_obj": L_obj,
+#                      "L_prime_obj": L_prime_obj, "L_prime_sub": L_prime_sub}
