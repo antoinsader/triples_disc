@@ -86,6 +86,7 @@ class _MinimizedFiles:
     RELATIONS_EMBEDDINGS: str = "relation_embeddings.npz"
     TRANSE_MODEL_RESULTS: str = "transe_rel_embs.npz"
     SILVER_SPANS: str = "silver_spans.pkl"
+    GOLD_TRIPLES: str = "golden_triples.pkl"
 
     DESCRIPTION_EMBEDDINGS_ALL: str = "description_embeddings_all.npz"
     DESCRIPTION_EMBEDDINGS_MEAN: str = "description_embeddings_mean.npz"
@@ -101,7 +102,8 @@ class _MinimizedFiles:
                      "SILVER_SPANS",
                      "DESCRIPTION_EMBEDDINGS_ALL",
                      "DESCRIPTION_EMBEDDINGS_MEAN",
-                     "DESCRIPTION_EMBEDDINGS_IDS"]:
+                     "DESCRIPTION_EMBEDDINGS_IDS",
+                     "GOLD_TRIPLES"]:
             filename = getattr(self, attr)
             setattr(self, attr, os.path.join(self.minimized_dir, filename))
 

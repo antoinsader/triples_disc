@@ -22,22 +22,22 @@ class RawDataLoader:
     # ------------------------------------------------------------------ #
 
     def _parse_triples(self, raw_fp) -> dict:
-        result = defaultdict(list)
+        result = []
         with open(raw_fp, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-        for line in tqdm(lines, desc="parsing triples"):
-            head, relation, tail = line.strip().split("\t")
-            result[head].append((head, relation, tail))
+            for line in tqdm(f, desc="Parsing triples"):
+                parts = line.strip().split("\t")
+                if len(parts) == 3:
+                    head, relation, tail = parts
+                    result.append((head, relation, tail))
         return result
 
     def _parse_descriptions(self, raw_fp) -> dict:
         result = {}
         with open(raw_fp, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-        for line in tqdm(lines, desc="parsing descriptions"):
-            parts = line.strip().split("\t")
-            if len(parts) >= 2:
-                result[parts[0]] = parts[1]
+            for line in tqdm(f, desc="parsing descriptions"):
+                parts = line.strip().split("\t")
+                if len(parts) >= 2:
+                    result[parts[0]] = parts[1]
         return result
 
     def _parse_aliases(self, raw_fp) -> dict:
@@ -122,63 +122,8 @@ class RawDataLoader:
         self.get_relations()
 
 
-class HelpersData:
-    """Loads/creates helper data (stop words, special-char patterns)."""
-
-    def __init__(self, helpers_files):
-        self.fp = helpers_files
-
-    def get_strange_chars(self) -> list:
-        if os.path.isfile(self.fp.STRANGE_CHARS):
-            return read_cached_array(self.fp.STRANGE_CHARS)
-        patterns = [(re.compile(p, re.IGNORECASE), r) for p, r in {
-            r'[€"©]': "",
-            r"[áăắặằẳẵǎâấậầẩẫäǟȧǡạȁàảȃāąåǻḁãǽǣ]": "a",
-            r"[ḃḅḇ]": "b",
-            r"[ćčçḉĉċ]": "c",
-            r"[ďḑḓḋḍḏ]": "d",
-            r"[éĕěȩḝêếệềểễḙëėẹȅèẻȇēḗḕęẽḛé]": "e",
-            r"[ḟ]": "f",
-            r"[ǵğǧģĝġḡ]": "g",
-            r"[ḫȟḩĥḧḣḥẖ]": "h",
-            r"[íĭǐîïḯi̇ịȉìỉȋīįĩḭı]": "i",
-            r"[ǰĵ]": "j",
-            r"[ḱǩķḳḵ]": "k",
-            r"[ĺľļḽḷḹḻ]": "l",
-            r"[ḿṁṃ]": "m",
-            r"[ńňņṋṅṇǹṉñ]": "n",
-            r"[óŏǒôốộồổỗöȫȯȱọőȍòỏơớợờởỡȏōṓṑǫǭõṍṏȭǿøɔ]": "o",
-            r"[ṕṗ]": "p",
-            r"[ŕřŗṙṛṝȑȓṟ]": "r",
-            r"[śṥšṧşŝșṡẛṣṩ]": "s",
-            r"[ťţṱțẗṫṭṯ]": "t",
-            r"[úŭǔûṷüǘǚǜǖṳụűȕùủưứựừửữȗūṻųůũṹṵ]": "u",
-            r"[ṿṽ]": "v",
-            r"[ẃŵẅẇẉẁẘ]": "w",
-            r"[ẍẋ]": "x",
-            r"[ýŷÿẏỵỳỷȳẙỹy]": "y",
-            r"[źžẑżẓẕʐ]": "z",
-            r"[&]": "and",
-        }.items()]
-        cache_array(patterns, self.fp.STRANGE_CHARS)
-        return patterns
-
-    def get_stop_words(self) -> set:
-        if os.path.isfile(self.fp.STOP_WORDS):
-            return read_cached_array(self.fp.STOP_WORDS)
-        nltk.download("stopwords")
-        stop_words = set(nltk.corpus.stopwords.words("english"))
-        cache_array(stop_words, self.fp.STOP_WORDS)
-        return stop_words
-
-    def cache_all(self):
-        self.get_strange_chars()
-        self.get_stop_words()
-
-
 # Module-level singletons — safe to import anywhere, no side effects on load.
 data_loader = RawDataLoader(settings.RAW_FILES, settings.PREPROCESSED_FILES, settings.MINIMIZED_FILES)
-helpers_data = HelpersData(settings.HELPERS_FILES)
 
 
 def check_minimized_files():

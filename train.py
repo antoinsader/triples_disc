@@ -2,15 +2,14 @@
 import torch
 import os
 import torch.nn as nn
-
 from torch.utils.data import Dataset, DataLoader, DistributedSampler
 
 
-from perform_transe import NUM_WORKERS
+from train_transe import NUM_WORKERS
 from utils.files import read_cached_array, read_tensor
 from utils.settings import settings
 from utils.pre_processed_data import check_preprocessed_files, data_loader, check_minimized_files
-
+from models.EntityExtractor import EntityExtractor
 
 
 use_cuda = torch.cuda.is_available()
@@ -63,26 +62,6 @@ class BraskDataset(Dataset):
 
     def __len__(self):
         return self.N
-
-class EntityExtractor(nn.Module):
-    """Which tokens could be the start/end of entities, regardless of relation"""
-
-    def __init__(self, hidden_dim):
-        """Entity extraction module, predits start and end"""
-        super().__init__()
-        self.start_linear = nn.Linear(hidden_dim, 1)
-        self.end_linear = nn.Linear(hidden_dim, 1)
-
-    def forward(self, X: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-            X can be any shape (..., L, H).
-            Returns start_probs, end_probs, start_logits, end_logits each of shape (..., L, 1) — trailing H collapsed to scalar.
-        """
-        start_logits = self.start_linear(X)
-        end_logits = self.end_linear(X)
-        start = torch.sigmoid(start_logits)
-        end = torch.sigmoid(end_logits)
-        return start, end, start_logits, end_logits
 
 class RelationAttention(nn.Module):
     """In paper 3.3.2. Semantic relation guidance: returning fine-grained sentence representatio
@@ -469,6 +448,69 @@ if __name__ == "__main__":
 
 
 #DRAFT LOSS:
+
+# triples_per_sentence[b] = [
+#     ((h_tok_start, h_tok_end), r_idx, (t_tok_start, t_tok_end)),
+#     ...
+# ]
+
+# def brask_loss_per_triple(
+#     fwd_head_start_logits: torch.Tensor,  # (B, L)
+#     fwd_head_end_logits:   torch.Tensor,  # (B, L)
+#     fwd_tail_start_logits: torch.Tensor,  # (B, R, S, L)
+#     fwd_tail_end_logits:   torch.Tensor,  # (B, R, S, L)
+#     triples_per_sentence:  list,          # [b] -> [((hs,he), r, (ts,te)), ...]
+#     gold_subject_slots:    list,          # [b] -> [(hs, he), ...] ordered list of subject slots
+#     token_mask: torch.Tensor,             # (B, L)
+#     L: int,
+# ) -> torch.Tensor:
+
+#     L_sub = torch.tensor(0.0, device=fwd_head_start_logits.device)
+#     L_obj = torch.tensor(0.0, device=fwd_head_start_logits.device)
+#     n_triples = 0
+
+#     for b, triples in enumerate(triples_per_sentence):
+#         mask = token_mask[b]  # (L,)
+
+#         def masked_bce(logits, gold):
+#             loss = F.binary_cross_entropy_with_logits(
+#                 logits, gold, reduction='none'
+#             )
+#             return (loss * mask).sum() / (mask.sum() + 1e-8)
+
+#         for (h_start, h_end), r_idx, (t_start, t_end) in triples:
+
+#             # Build gold head vector for this specific triple
+#             gold_h_start = torch.zeros(L, device=fwd_head_start_logits.device)
+#             gold_h_end   = torch.zeros(L, device=fwd_head_start_logits.device)
+#             gold_h_start[h_start] = 1.0
+#             gold_h_end[h_end]     = 1.0
+
+#             # Build gold tail vector for this specific triple
+#             gold_t_start = torch.zeros(L, device=fwd_tail_start_logits.device)
+#             gold_t_end   = torch.zeros(L, device=fwd_tail_start_logits.device)
+#             gold_t_start[t_start] = 1.0
+#             gold_t_end[t_end]     = 1.0
+
+#             # Subject loss — same formula regardless of relation
+#             L_sub = L_sub \
+#                   + masked_bce(fwd_head_start_logits[b], gold_h_start) \
+#                   + masked_bce(fwd_head_end_logits[b],   gold_h_end)
+
+#             # Object loss — need s_idx to index into (B, R, S, L)
+#             # Find which slot this head span occupies in the padded sk tensor
+#             h_span = (h_start, h_end)
+#             if h_span in gold_subject_slots[b]:
+#                 s_idx = gold_subject_slots[b].index(h_span)
+#                 L_obj = L_obj \
+#                       + masked_bce(fwd_tail_start_logits[b, r_idx, s_idx], gold_t_start) \
+#                       + masked_bce(fwd_tail_end_logits[b,   r_idx, s_idx], gold_t_end)
+
+#             n_triples += 1
+
+#     return (L_sub + L_obj) / max(n_triples, 1)
+
+
 # def entity_loss(pred_start: torch.Tensor,
 #                 pred_end: torch.Tensor,
 #                 gold_start: torch.Tensor,

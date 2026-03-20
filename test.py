@@ -34,12 +34,17 @@ relations = {
     "R5": ["likes", "loves", "admires"]
 }
 
-triples = {
+triples_dict = {
     "Q1": [("Q1", "R1", "Q4"), ("Q1", "R2", "Q5")],
     "Q2": [("Q2", "R3", "Q5"), ("Q2", "R4", "Q5")],
     "Q3": [("Q3", "R4", "Q5"), ("Q3", "R5", "Q2")]
 }
 
+triples = [
+    ("Q1", "R1", "Q4"), ("Q1", "R2", "Q5"),
+    ("Q2", "R3", "Q5"), ("Q2", "R4", "Q5"),
+    ("Q3", "R4", "Q5"), ("Q3", "R5", "Q2")
+]
 
 def test_chunk_dict():
     print(descriptions.items())
@@ -85,11 +90,11 @@ def test_parallel():
 def test_silver_spans():
     from transformers import BertTokenizerFast
     from utils.chunking import chunk_dict
-    from prepare_silver_spans import create_aliases_patterns_map, init_worker, process_descriptions_chunk, create_description_heads_tails_map_aliases
+    from archive.prepare_silver_spans import create_aliases_patterns_map, init_worker, process_descriptions_chunk, create_description_heads_tails_map_aliases
     max_length = 3
     tokenizer = BertTokenizerFast.from_pretrained('bert-base-cased')
     aliases_pattern_map = create_aliases_patterns_map(aliases)
-    descriptions_heads_aliases, descriptions_tails_aliases = create_description_heads_tails_map_aliases(descriptions, triples, aliases)
+    descriptions_heads_aliases, descriptions_tails_aliases = create_description_heads_tails_map_aliases(descriptions, triples_dict, aliases)
     print(f"descriptions_heads_aliases: {descriptions_heads_aliases}")
     print(f"descriptions_tails_aliases: {descriptions_tails_aliases}")
     desc_chunks = chunk_dict(descriptions, chunks_n=2)
@@ -123,9 +128,9 @@ def test_silver_spans():
     for d_idx, d_id in enumerate(desc_ids):
         print(f"description: {descriptions[d_id]}" )
 
-        print("description triples: ")
-        if d_id in triples:
-            for t_idx, (h,_,t) in enumerate(triples[d_id]):
+        print("description triples_dict: ")
+        if d_id in triples_dict:
+            for t_idx, (h,_,t) in enumerate(triples_dict[d_id]):
                 print(f"\t triple number: {t_idx + 1}")
                 print(f"\t\t head aliases: {aliases[h] if h in aliases else 'None'}")
                 print(f"\t\t tail aliases: {aliases[t] if t in aliases else 'None'}")
@@ -266,20 +271,35 @@ def test_fuse_extractor(forward_s_k, forward_s_k_mask):
     print(f"new sk shape {new_sk.shape} : {new_sk}")
 
 
+def test_print_log(str_input, log_file=None):
+    # Specify your file path here
+    if log_file is None:
+        log_file = "test_output.log"
+
+    with open(log_file, "a", encoding="utf-8") as f:
+        f.write(f"{str_input}\n")
+
 def test_extract_spans():
     # Mocking prepare_gold_labels chunk_description_discover_aliases_span
     from prepare_gold_labels import create_aliases_patterns_map
     from transformers import BertTokenizerFast
-
+    global descriptions, triples, aliases
     triples_chunk = triples
-    description_chunk = descriptions
+    _DESCRIPTIONS_DICT = descriptions
     max_descriptions_length = 20
     _ALIASES_DICT = aliases
     _ALIASES_PATTERNS_MAP = create_aliases_patterns_map(aliases)
     _TOKENIZER= BertTokenizerFast.from_pretrained('bert-base-cased')
 
-    descriptions_ids = list(description_chunk.keys())
-    descriptions_texts = list(description_chunk.values())
+
+
+    triples_head_ids = set([t[0] for t in triples_chunk ])
+    descriptions = {k:v for k,v in _DESCRIPTIONS_DICT.items() if k in triples_head_ids}
+    descriptions_ids = list(descriptions.keys())
+    descriptions_texts = list(descriptions.values())
+
+
+
     enc = _TOKENIZER(
         descriptions_texts,
         return_offsets_mapping=False,
@@ -292,44 +312,61 @@ def test_extract_spans():
     )
     tokens = [encoding.tokens for encoding in enc.encodings]
 
-    head_spans = defaultdict(set)
-    tail_spans = defaultdict(set)
-
-    for desc_idx, desc_id in tqdm(enumerate(descriptions_ids), total=len(descriptions_ids), desc="Extracting spans"):
-        description_text = descriptions_texts[desc_idx]
-        if not desc_id in triples_chunk:
-            continue
-        description_triples = triples_chunk[desc_id]
-        for h, _, t in description_triples:
-            head_aliases_patterns = [_ALIASES_PATTERNS_MAP[als_str]  for als_str  in  _ALIASES_DICT[h] ]
-            tail_alises_patterns = [_ALIASES_PATTERNS_MAP[als_str]  for als_str  in  _ALIASES_DICT[t] ]
+    triple_spans = defaultdict(list)  # h -> [(head_spans, rel_idx, tail_spans), ...]
 
 
-            for head_alias_pattern in head_aliases_patterns:
-                for match in head_alias_pattern.finditer(description_text):
-                    char_start, char_end = match.span()
-                    actual_char_end = char_end - 1
-                    token_start_idx = enc.char_to_token(desc_idx, char_start)
-                    token_end_idx = enc.char_to_token(desc_idx, actual_char_end)
-                    if token_start_idx is not None and token_end_idx is not None:
-                        head_spans[desc_id].add((token_start_idx, token_end_idx))
-            for tail_pattern in tail_alises_patterns:
-                for match in tail_pattern.finditer(description_text):
-                    char_start, char_end = match.span()
-                    actual_char_end = char_end - 1
-                    token_start_idx = enc.char_to_token(desc_idx, char_start)
-                    token_end_idx = enc.char_to_token(desc_idx, actual_char_end)
-                    if token_start_idx is not None and token_end_idx is not None:
-                        tail_spans[desc_id].add((token_start_idx, token_end_idx))
-        head_spans[desc_id] = list(head_spans[desc_id])
-        tail_spans[desc_id] = list(tail_spans[desc_id])
-        print("******* NEW SENTENCE ************")
-        print(f" tokens: {tokens[desc_idx]}")
-        print(f" head_spans: {head_spans[desc_id]}")
-        print(f" tail_spans: {tail_spans[desc_id]}")
-        # print(f" head spans tokens: {[tokens[desc_idx][s:e + 1] for s,e in head_spans[desc_id]]}")
-        # print(f" tail spans tokens: {[tokens[desc_idx][s:e + 1] for s,e in tail_spans[desc_id]]}")
-    return head_spans, tail_spans
+    for h,r,t in tqdm(triples_chunk, desc=f"Extracting aliases from triples"):
+        head_spans_found = set()
+        tail_spans_found = set()
+
+
+        description_idx = descriptions_ids.index(h)
+        description_text=descriptions_texts[description_idx]
+
+        head_aliases_patterns = [_ALIASES_PATTERNS_MAP[als_str]  for als_str  in  _ALIASES_DICT[h] ]
+        tail_alises_patterns = [_ALIASES_PATTERNS_MAP[als_str]  for als_str  in  _ALIASES_DICT[t] ]
+        for head_alias_pattern in head_aliases_patterns:
+            for match in head_alias_pattern.finditer(description_text):
+                char_start, char_end = match.span()
+                actual_char_end = char_end - 1
+                token_start_idx = enc.char_to_token(description_idx, char_start)
+                token_end_idx = enc.char_to_token(description_idx, actual_char_end)
+                if token_start_idx is not None and token_end_idx is not None:
+                    head_spans_found.add((token_start_idx, token_end_idx))
+
+        for tail_pattern in tail_alises_patterns:
+            for match in tail_pattern.finditer(description_text):
+                char_start, char_end = match.span()
+                actual_char_end = char_end - 1
+                token_start_idx = enc.char_to_token(description_idx, char_start)
+                token_end_idx = enc.char_to_token(description_idx, actual_char_end)
+                if token_start_idx is not None and token_end_idx is not None:
+                    tail_spans_found.add((token_start_idx, token_end_idx))
+
+        for h_spans in head_spans_found:
+            for t_spans in tail_spans_found:
+                triple_spans[h].append((h_spans, r, t_spans))
+
+
+
+    for idx, description_id in enumerate(descriptions_ids):
+        test_print_log("******* NEW SENTENCE ************")
+        test_print_log(f" tokens: {tokens[idx]}")
+        triples_found = triple_spans[description_id]
+        for h_spans, r, t_spans in triples_found:
+            test_print_log(f"\t golden triple {(h_spans, r, t_spans)} ")
+            test_print_log(f"\t head: {tokens[idx][h_spans[0]:h_spans[1] + 1]}")
+            test_print_log(f"\t Relation: {relations[r]}")
+            test_print_log(f"\t tail: {tokens[idx][t_spans[0]:t_spans[1] + 1]}")
+
+
+
+
+
+
+
+
+
 
 
 if __name__ == "__main__":
@@ -343,3 +380,7 @@ if __name__ == "__main__":
 
 
     test_extract_spans()
+
+# >>> descs = dict([(f"Q_{n+1}", f"hey i am q {n + 1}")  for n in np.arange(0,100)   ])                                                     
+# >>> trps = [ [(f"Q_{t_num}" , 1, f"Q_{np.random.randint(0,100)}" )   for n in range(np.random.randint(1,3))    ]    for t_num in np.arange(0,100)    ] 
+# >>> trps = [item for sublist in trps for item in sublist]    
