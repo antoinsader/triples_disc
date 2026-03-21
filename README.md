@@ -1,190 +1,116 @@
 
-  
-
 # Wiki BRASK
- train a model using BRASK ([Bidirectional relation-guided attention network with semantics and knowledge for relational triple extraction](https://www.sciencedirect.com/science/article/abs/pii/S0957417423004062)) on wikidata5m dataset to detect entity pairs with relations from sentences.
-  - I had scalability problems the first time I trained (/archive)[/archive] the model so now I am wokring on:
-  - (1) Improving project's architecture
-  - (2) Using PyTorch DDP (Distributed Data Parallel)
-  - (3) Using circular training (entity extraction, Relation extraction, backward extractor, final fine tuning)
-  - (4) Adding other useful pre-processing steps
 
+A PyTorch implementation of the [BRASK](https://www.sciencedirect.com/science/article/abs/pii/S0957417423004062) algorithm — **Bidirectional Relation-guided Attention network with Semantics and Knowledge** — applied to the Wikidata5m dataset for relational triple extraction.
 
-- The project report is available at [REPORT](docs/report.pdf)
+BRASK is used to extract structured knowledge triples `(head entity, relation, tail entity)` directly from natural language descriptions. It does this by learning to locate entity spans in text guided by relation embeddings, running both a forward pass (head → relation → tail) and a backward pass (tail → relation → head) jointly.
 
+This implementation uses PyTorch with DDP support for distributed training and follows a staged circular training approach: entity extraction, relation-guided extraction, backward extraction, and full fine-tuning.
 
-## Training graph:
+---
 
-![Training_graph](docs/graph.png)
+## Download Dataset
 
-## Download dataset:
-```
-    curl -L -o wikidata5m_text.txt.gz "https://www.dropbox.com/s/7jp4ib8zo3i6m10/wikidata5m_text.txt.gz?dl=1" && gunzip wikidata5m_text.txt.gz    
-    curl -L -o wikidata5m_alias.tar.gz "https://www.dropbox.com/s/lnbhc8yuhit4wm5/wikidata5m_alias.tar.gz?dl=1" && gunzip wikidata5m_alias.tar.gz && tar -xvf wikidata5m_alias.tar
-    curl -L -o wikidata5m_transductive.tar.gz "https://www.dropbox.com/s/6sbhm0rwo4l73jq/wikidata5m_transductive.tar.gz?dl=1" && gunzip wikidata5m_transductive.tar.gz && tar -xvf wikidata5m_transductive.
+```bash
+curl -L -o wikidata5m_text.txt.gz "https://www.dropbox.com/s/7jp4ib8zo3i6m10/wikidata5m_text.txt.gz?dl=1" && gunzip wikidata5m_text.txt.gz
+
+curl -L -o wikidata5m_alias.tar.gz "https://www.dropbox.com/s/lnbhc8yuhit4wm5/wikidata5m_alias.tar.gz?dl=1" && gunzip wikidata5m_alias.tar.gz && tar -xvf wikidata5m_alias.tar
+
+curl -L -o wikidata5m_transductive.tar.gz "https://www.dropbox.com/s/6sbhm0rwo4l73jq/wikidata5m_transductive.tar.gz?dl=1" && gunzip wikidata5m_transductive.tar.gz && tar -xvf wikidata5m_transductive.tar
 ```
 
-## Codebase:
-The first version of the code exists inside **/archive**, now I am refactoring the steps in the root file. The new code for the training pipeline is not totally ready, the old code of archive worked but only using big GPU RAM and using pytorch ddp, that's the main reason of the refactoring process.
+Place the extracted files in the path configured in `utils/settings.py` under `RAW_FILES`.
 
-## Training steps:
+---
 
-### **1- Minimize**:
+## Pipeline
 
-#### Objective and run:
+### 1. Pre-processing — `prepare.py`
 
-Wikidata5m is a huge dataset, so if you are running on low RAM, you need to minimize it so you can test the algorithm, that's why you can run minimize.py by: 
-
-```
-python minimize.py
+```bash
+python prepare.py
 ```
 
-The script will ask you the minimize factor (between 0 and 1), then it will calculate approximate numbers of the size of descriptions after minimization and you can proceed by typing y.
-After it runs 4 streaming passes (triples, descriptions, relations, aliases) and save the minimized files.
+A single interactive script that walks through all data preparation stages. At each stage the script asks whether to run it or skip it, so you can resume from any point without rerunning earlier steps. All stages operate on the **minimized** dataset (created in stage 1).
 
-After when you execute other steps, the terminal will ask you if you want to perform the operations on the minimized version or the full dataset.
+**Stages:**
 
-#### Output:
-Parsed full dictionaries files if not cached for desecriptions, triples, relations, aliases
-Minimized files for descriptions, triples, relations, aliases
+1. **Minimization** — prompts for a fraction (0–1) of training triples to keep, then sampling the dataset files accordingly using those training triples. output would be minimized version of training triples, aliases, relations, and descriptions.
+2. **Normalization** — cleans descriptions (remove non-English characters, Unicode NFKC, collapse spaces) and aliases (same + lowercasing + deduplication), then overwrites the minimized files in place.
+3. **Relation embeddings** — computes one 768-dim BERT embedding per relation by mean-pooling across all its aliases (average of last two hidden layers, attention-mask pooled, batched with mixed precision).  `set R in paper`
+4. **Description embeddings** — encodes every description with BERT, producing both per-token embeddings `(N, L, H)` and mean-pooled sentence embeddings `(N, H)`.
 
+**Output:**
 
+| File | Content |
+|---|---|
+| `minimized/triples_train.pkl` | Flat list of `(head_id, relation_id, tail_id)` tuples |
+| `minimized/aliases.pkl` | Dictionary of `{entity_id: [alias_str, ...]}` |
+| `minimized/relations.pkl` | Dictionary `{relation_id: [alias_str, ...]}` |
+| `minimized/descriptions.pkl` | Dictionary `{entity_id: description_text}` |
+| `minimized/relation_embeddings.npz` | Tensor `(n_relations, H)` |
+| `minimized/description_embeddings_all.pt` | Tensor `(B, L, H)` — per-token |
+| `minimized/description_embeddings_mean.pt` | Tensor `(B, H)` — mean-pooled |
+| `minimized/description_embeddings_ids.pkl` | List of entity IDs matching the embedding rows |
 
-### **2- Normalize**:
+---
 
-#### Objective and run:
+### 2. Train TransE — `train_transe.py`
 
-Normalization cleans descriptions and aliases so they are ready for downstream NLP tasks. Run it with:
-
-```
-python normalize.py
-```
-
-The script will ask whether to normalize the minimized dataset or the full dataset (default: minimized). If the minimized files are missing, it will prompt you to run `minimize.py` first.
-
-It then warns you which files will be overwritten and asks for confirmation before proceeding.
-
-#### Details:
-Normalization steps applied to each value in **descriptions** dictionary:
-- Replace special characters with their equivalent (e.g. `á→a`, `é→e`, `&→and`)
-- Remove words that contain non-English characters
-- Apply Unicode NFKC normalization
-- Collapse multiple spaces
-- **Does NOT lowercase**
-- **Does NOT remove stop words**
-
-
-Normalization steps applied to each list of **aliases**:
-- Replace special characters with their equivalent (e.g. `á→a`, `é→e`, `&→and`)
-- Skip aliases that are English stop words
-- Apply Unicode NFKC normalization
-- Collapse multiple spaces
-- Lowercase the result
-- Deduplicate aliases per entity
-
-
-#### Output:
-Overwrite aliases and descriptions files with normalized content.
-
-
-### **3- Embed relations**:
-
-#### Objective and run:
-
-This step produces one 768-dimensional BERT embedding per relation, averaged across all its text aliases, in order to use those embeddings in perform_transe file where we are performing transE algorithm on the relations. Run it with:
-
-```
-python embed_relations.py
+```bash
+python train_transe.py
+# or with DDP:
+torchrun --nproc_per_node=<N_GPUS> train_transe.py
 ```
 
-The script will ask whether to embed the minimized or the full dataset (default: minimized). If the source `relations.pkl` file is missing, it will prompt you to run the appropriate prior step first.
-It then warns you which file will be overwritten and asks for confirmation before proceeding.
+Trains the TransE knowledge graph embedding model (Bordes et al. 2013) on the minimized triples. For each training triple `(h, r, t)`, a negative triple is generated on-the-fly by corrupting either the head or tail with a random entity. The model minimises the margin-based loss `mean(MARGIN + ||h+r-t||₁ − ||h'+r−t'||₁)` with Adam + CosineAnnealingLR. Embedding tables are L1-normalised after every batch. Supports multi-GPU via PyTorch DDP (detected automatically from the `LOCAL_RANK` environment variable set by `torchrun`).
 
+**Output:** `minimized/transe_rel_embs.npz` — relation embedding matrix of shape `(n_relations, TRANSE_EMB_DIM)`.
 
-#### Details:
+---
 
-**Embedding approach:**
-- Loads `bert-base-cased` at runtime (not at import time) and moves it to GPU if available
-- Flattens all aliases across all relations into a single list and processes them in batches (`BATCH_SIZE = 32` on CPU, `8192` on CUDA)
-- Each alias embedding is the attention-mask mean-pool of the average of BERT's last two hidden layers
-- Per-alias embeddings are accumulated per relation with `scatter_add_` and divided by alias count → one averaged embedding per relation
-- Uses `torch.autocast` for mixed-precision (float16 on CUDA, bfloat16 on CPU)
-- Relations with no aliases fall back to using the relation ID itself as input text
+### 3. Build Gold Labels — `prepare_gold_labels.py`
 
-#### Output:
-
-a compressed `.npz` file of shape `(n_relations, 768)` saved to `relation_embeddings.npz`
-
-
-
-### **4- Perform TransE algorithm**
-
-#### Objective and run:
-TransE knowledge graph embedding model (Bordes et al. 2013).
-Learns entity and relation embeding by minimizing the scoring function of ```|| h + r - t ||``` to learn the relations of (head, relation, tail).
-
-```
-python perform_transe.py
+```bash
+python prepare_gold_labels.py
 ```
 
-#### Details:
+Generates token-level binary span labels for training the BRASK model. Unlike heuristic silver spans, gold labels are anchored to individual triples: for every triple `(h, r, t)` associated with a description, the script locates the head entity `h` and tail entity `t` in the description text using all known aliases, then records the exact token start and end positions using `tokenizer.char_to_token()`. Processing is parallelised across description chunks via `multiprocessing.Pool`.
 
-- The training is detecting wheter LOCAL_RANK environment variable exists, which will be when using torchrun, to use **Torch Distributed Data Parallel - torch DDP**, and falls back to single-gpu or cpu when LOCAL_RANK does not exist
+This triple-anchored approach is necessary for computing the loss correctly: the model's head and tail predictions are evaluated per-triple, so the labels must reflect which token spans correspond to a specific `(head, relation, tail)` rather than to the entity in general.
 
-- **Create the dataset**: We are creating **TransEDataset**, which will generate ent2idx, rel2idx (mapping from entities and relations to their idxs), n_ents, n_rels, triples, neg_triples (corrupted triples where head or tail is corrupted). the __getitem__ of the dataset will return tuple[torch tensor from triples, torch tensor from negative triples]. The dataset is inheriting from torch.utils.Dataset
-- Build the ```TransEModel```, with Adam as an ```optimizer``` and ```CosineAnnealingLR``` as scheduler. 
-- Training the model, where forward pass is computing L1 distances for positive and negative triple batches. and using with loss as  the mean of (MARGIN + pos_distance - neg_distance)
+**Output:** gold label files containing per-triple head and tail span positions, mapped to token indices, saved to the minimized data directory.
 
+---
 
-#### Output
-Save the model results in the file ```transe_rel_embs.npz``` with shape (n_relations, TRANSE_EMB_DIM)
+### 4. Train BRASK — `train.py`
 
+> **Work in progress.** The model architecture and forward pass are implemented; the loss function and training loop are still being developed.
 
-### **5- Prepare silver spans**:
-
-#### Objective and run:
-
-The objective of this step is to extract silver spans to be used in the training after.
-The script can be used also to filter descriptions to only those having at least one value in the silver spans.
-
-### Details:
-
-The scripts at first prompts the user if to use minimized dataset or the normal one.
-After the script is finished from extracting and saving silver spans, it will prompt if to filter the descriptions
-
-Silver spans are 4 types each is a torch tensor with shape (DESCRIPTIONS, MAX_LENGTH):
-- Head start silver spans: For each description there is an array containing as a value 1 if the token position is a **start of a head**, 0 otherwise
-- Head end silver spans: For each description there is an array containing as a value 1 if the token position is a **end of a head**, 0 otherwise
-- Tail start silver spans: For each description there is an array containing as a value 1 if the token position is a **start of a tail**, 0 otherwise
-- Tail end silver spans: For each description there is an array containing as a value 1 if the token position is a **end of a tail**, 0 otherwise
-
-Also in the results we have:
-- sentences_tokens: the tokens of each description
-- desc_ids: to map the indexes
-
-We are preparing the results by:
-- Create aliases regex pattern map: For each alias, a regex compiled pattern. To be used after for finding aliases inside descriptions texts.
-- Create descriptions_heads_aliases, descriptions_tails_aliases: where for each description, we extract the aliases of their heads and aliases of their tails
-- **Parallel processing** for description chunks to extract the spans using the previously prepared maps.
-
-
-#### Output:
-
-- The result is saved in ```silver_spans.pkl``` file containing a dict with 6 keys
-
+```bash
+python train.py
 ```
-{
-    "head_start": tensor(N,L), 
-    "head_end": tensor(N,L), 
-    "tail_start": tensor(N,L), 
-    "tail_end": tensor(N,L), 
-    "sentences_tokens": list[list[str]], 
-    "desc_ids": list[str]
-}
-```
-    Where N is the number of descriptions, L is the maximum_length for the tokenizer
 
-- Overwrite desceriptions file if approved by user.
+Implements the full BRASK model as a PyTorch `nn.Module` with the following components:
 
+- **`EntityExtractor`** — two linear heads predicting token-level start and end probabilities for entity spans, returning both probabilities and raw logits for BCE loss.
+- **`RelationAttention`** — attention mechanism that produces relation-conditioned sentence representations; used twice in parallel: once with BERT semantic relation embeddings, once with TransE relation embeddings.
+- **`FuseExtractor`** — fuses subject representations `s_k`, relation context `c_j`, and token embeddings `x_i` into `h_ijk` for object span prediction.
+- **`BraskModel`** — full forward + backward pipeline: predict head spans → extract subject representations → compute relation attention → fuse → predict tail spans; symmetric backward path for tail-first extraction.
+- **`entity_extractor_loss`** — masked BCE loss for staged training of the entity extractor alone (in `models/EntityExtractor.py`).
+
+**Planned / not yet implemented:**
+- Full `brask_loss` combining forward and backward terms with subject-slot masking.
+- Span post-processing (overlapping spans, invalid spans where end < start).
+- Gating fusion alternative in `FuseExtractor`.
+- Relation smart pruning (top-k by cosine similarity pre-computed per description).
+- Post-prediction alias filtering to improve precision.
+- Circular staged training loop.
+
+---
+
+## Archive
+
+The first version of the training code is preserved in [`/archive`](archive/). It was a monolithic pipeline that ran end-to-end but required large GPU RAM and did not scale well. The current codebase is a full refactor of that work with cleaner separation of concerns, DDP support, and a corrected labeling strategy. [changelog_mar2026](docs/changelog_mar2026) includes what I am refactoring now.
 
 

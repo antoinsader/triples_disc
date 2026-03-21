@@ -144,13 +144,15 @@ def normalize():
     normalizer = Normalizer(strange_chars, lowercasing=True)
     aliases = data_loader.get_aliases(minimized=True)
     print(f"Normalizing {len(aliases)} aliases")
-    norm_aliases = defaultdict(list)
+    norm_aliases = defaultdict(set)
     total_items = sum(len(lst) for lst in aliases.values())
     with tqdm(total=total_items, desc="Normalizing") as pbar:
         for als_id, als_lst in aliases.items():
-            norm_aliases[als_id] = [normalizer(als_str) for als_str in als_lst]
+            for als_str in als_lst:
+                norm_aliases[als_id].add(normalizer(als_str))
             pbar.update(len(als_lst))
     del aliases
+    norm_aliases = {k: list(v) for k, v in norm_aliases.items()}
     cache_array(norm_aliases, out_aliases)
     print(f"Normalized aliases saved {len(norm_aliases)} -> {out_aliases} ")
     del norm_aliases
