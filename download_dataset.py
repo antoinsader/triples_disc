@@ -7,23 +7,26 @@ import urllib.request
 
 from utils.settings import settings
 
-DOWNLOADS = [
-    {
+DOWNLOADS = {
+    "DESCRIPTIONS": {
         "url": "https://www.dropbox.com/s/7jp4ib8zo3i6m10/wikidata5m_text.txt.gz?dl=1",
         "filename": "wikidata5m_text.txt.gz",
         "type": "gz",
+        "out_files": [settings.RAW_FILES.DESCRIPTIONS],
     },
-    {
+    "ALIASES":{
         "url": "https://www.dropbox.com/s/lnbhc8yuhit4wm5/wikidata5m_alias.tar.gz?dl=1",
         "filename": "wikidata5m_alias.tar.gz",
         "type": "tar.gz",
+        "out_files": [settings.RAW_FILES.ALIASES, settings.RAW_FILES.RELATIONS],
     },
-    {
+    "TRIPLES": {
         "url": "https://www.dropbox.com/s/6sbhm0rwo4l73jq/wikidata5m_transductive.tar.gz?dl=1",
         "filename": "wikidata5m_transductive.tar.gz",
         "type": "tar.gz",
+        "out_files": [settings.RAW_FILES.TRIPLES_TRAIN, settings.RAW_FILES.TRIPLES_VALID, settings.RAW_FILES.TRIPLES_TEST],
     },
-]
+}
 
 
 def download_file(url: str, dest_path: str) -> None:
@@ -54,22 +57,28 @@ def extract_tar_gz(tar_gz_path: str, out_dir: str) -> None:
 
 
 def main():
+
     raw_dir = settings.FOLDERS.RAW_DIR
-    os.makedirs(raw_dir, exist_ok=True)
-    print(f"Target directory: {os.path.abspath(raw_dir)}\n")
-
-    for entry in DOWNLOADS:
-        archive_path = os.path.join(raw_dir, entry["filename"])
-
-        download_file(entry["url"], archive_path)
-
-        if entry["type"] == "gz":
-            extract_gz(archive_path, raw_dir)
-        elif entry["type"] == "tar.gz":
-            extract_tar_gz(archive_path, raw_dir)
-
-        os.remove(archive_path)
-        print(f"Removed archive {entry['filename']}\n")
+    for download in DOWNLOADS.values():
+        exists = True
+        for r_f in download["out_files"]:
+            if not os.path.exists(r_f):
+                exists = False
+                break
+        if exists:
+            answer = input(f"Files {', '.join(download['out_files'])} already exist, do you want to overwrite them? [y: yes]/[n: no] ").strip().lower()
+            if answer != "y":
+                print("Cancelled download, continuing...")
+                continue
+        
+        download_file_name = os.path.join(raw_dir, download["filename"])
+        download_file(download[ "url"], download_file_name)
+        if download["type"] == "gz":
+            extract_gz(download_file_name, raw_dir)
+        elif download["type"] == "tar.gz":
+            extract_tar_gz(download_file_name, raw_dir)
+        os.remove(download_file_name)
+        print(f"Downloaded and extracted {', '.join(download['out_files'])}\n")
 
     print("All files downloaded and extracted.")
 

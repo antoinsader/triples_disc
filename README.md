@@ -8,37 +8,56 @@ BRASK is used to extract structured knowledge triples `(head entity, relation, t
 This implementation uses PyTorch with DDP support for distributed training and follows a staged circular training approach: entity extraction, relation-guided extraction, backward extraction, and full fine-tuning.
 
 ---
+## Build the model
+
+### Create environment
+
+1- Create your python env and activate it, download requirements
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
 
 ## Download Dataset
 
+You can use the script for downloading the Wikidata5m:
+
 ```bash
-curl -L -o wikidata5m_text.txt.gz "https://www.dropbox.com/s/7jp4ib8zo3i6m10/wikidata5m_text.txt.gz?dl=1" && gunzip wikidata5m_text.txt.gz
-
-curl -L -o wikidata5m_alias.tar.gz "https://www.dropbox.com/s/lnbhc8yuhit4wm5/wikidata5m_alias.tar.gz?dl=1" && gunzip wikidata5m_alias.tar.gz && tar -xvf wikidata5m_alias.tar
-
-curl -L -o wikidata5m_transductive.tar.gz "https://www.dropbox.com/s/6sbhm0rwo4l73jq/wikidata5m_transductive.tar.gz?dl=1" && gunzip wikidata5m_transductive.tar.gz && tar -xvf wikidata5m_transductive.tar
+python download_dataset.py
 ```
+This downloads the necessary files and extract the files into `/data/raw/` -the default raw folder-.
+> The script will locate old existing raw files and asks if you want to override them.
 
-Place the extracted files in the path configured in `utils/settings.py` under `RAW_FILES`.
+Wikidata5m raw files:
+`wikidata5m_text.txt`: containing `description` for each `entity_id`   
+`wikidata5m_alias.txt`: containing list of `aliases` for each `entity_id`   
+`triples.txt`: containing list of `aliases` for each `entity_id`   
 
 ---
+
 
 ## Pipeline
 
 ### 1. Pre-processing — `prepare.py`
 
+The **interactive script** would walks through the data **pre-processing stages**. 
+
+Run the script:
 ```bash
 python prepare.py
 ```
 
-A single interactive script that walks through all data preparation stages. At each stage the script asks whether to run it or skip it, so you can resume from any point without rerunning earlier steps. All stages operate on the **minimized** dataset (created in stage 1).
+> Before each stage, the terminal would ask if you want to perform the action (default is `y`). 
+> All stages operate on the **minimized** dataset (created in stage 1).
 
-**Stages:**
+**pre-processing stages:**
 
-1. **Minimization** — prompts for a fraction (0–1) of training triples to keep, then sampling the dataset files accordingly using those training triples. output would be minimized version of training triples, aliases, relations, and descriptions.
-2. **Normalization** — cleans descriptions (remove non-English characters, Unicode NFKC, collapse spaces) and aliases (same + lowercasing + deduplication), then overwrites the minimized files in place.
-3. **Relation embeddings** — computes one 768-dim BERT embedding per relation by mean-pooling across all its aliases (average of last two hidden layers, attention-mask pooled, batched with mixed precision).  `set R in paper`
-4. **Description embeddings** — encodes every description with BERT, producing both per-token embeddings `(N, L, H)` and mean-pooled sentence embeddings `(N, H)`.
+1. **Minimization** — (a) prompt for a decimal factor `0 < minimization-fraction < 1` of the `training triples` you want to keep. (b) parse the raw files into pickle files. (c) create minimized versions and save it.
+2. **Normalization** — (1) clean `descriptions` (remove non-English characters, Unicode NFKC, collapse spaces). (2) clean aliases (same + lowercasing + deduplication). (3) overwrite the minimized files in place.
+3. **Relation embeddings** — (1) computes one 768-dim BERT embedding per relation by mean-pooling across all its aliases (average of last two hidden layers, attention-mask pooled, batched with mixed precision), this represents `set R in paper`.
+4. **Description embeddings** — encodes every description with BERT, producing (1) per-token description embeddings `(N, L, H)` (2) mean-pooled description embeddings `(N, H)`.
 
 **Output:**
 
@@ -63,7 +82,11 @@ python train_transe.py
 torchrun --nproc_per_node=<N_GPUS> train_transe.py
 ```
 
-Trains the TransE knowledge graph embedding model (Bordes et al. 2013) on the minimized triples. For each training triple `(h, r, t)`, a negative triple is generated on-the-fly by corrupting either the head or tail with a random entity. The model minimises the margin-based loss `mean(MARGIN + ||h+r-t||₁ − ||h'+r−t'||₁)` with Adam + CosineAnnealingLR. Embedding tables are L1-normalised after every batch. Supports multi-GPU via PyTorch DDP (detected automatically from the `LOCAL_RANK` environment variable set by `torchrun`).
+Trains the TransE knowledge graph embedding model (Bordes et al. 2013) on the minimized `triples`. 
+For each training triple `(h, r, t)`, a `negative triple` is generated on-the-fly by corrupting either the head or tail with a random entity. 
+The model minimises the margin-based loss `mean(MARGIN + ||h+r-t||₁ − ||h'+r−t'||₁)` with `Adam` + `CosineAnnealingLR`. Embedding tables are L1-normalised after every batch. 
+
+> Support multi-GPU via PyTorch DDP (detected automatically from the `LOCAL_RANK` environment variable set by `torchrun`).
 
 **Output:** `minimized/transe_rel_embs.npz` — relation embedding matrix of shape `(n_relations, TRANSE_EMB_DIM)`.
 
@@ -75,11 +98,36 @@ Trains the TransE knowledge graph embedding model (Bordes et al. 2013) on the mi
 python prepare_gold_labels.py
 ```
 
-Generates token-level binary span labels for training the BRASK model. Unlike heuristic silver spans, gold labels are anchored to individual triples: for every triple `(h, r, t)` associated with a description, the script locates the head entity `h` and tail entity `t` in the description text using all known aliases, then records the exact token start and end positions using `tokenizer.char_to_token()`. Processing is parallelised across description chunks via `multiprocessing.Pool`.
+We loop through the training triples, and for each triple, we extract the spans (token index) of the `head aliases` and `tail aliases`
 
-This triple-anchored approach is necessary for computing the loss correctly: the model's head and tail predictions are evaluated per-triple, so the labels must reflect which token spans correspond to a specific `(head, relation, tail)` rather than to the entity in general.
+The output of golden labels would be a dictionary having `entity_id` as a key, a list of triple spans as a value.
+Thus, for each  `entity_id` we will have a list of tuples, each tuple having `(head_spans, relation_id, tail_spans)`. `head_spans` and `tail_spans` are tuples `(start_index, end_index)`.
+
+> Processing is parallelised across triples chunks via `multiprocessing.Pool`.
+
 
 **Output:** gold label files containing per-triple head and tail span positions, mapped to token indices, saved to the minimized data directory.
+
+> If you want to take a look at what the golden triples generated, you can run the script: 
+
+```bash
+
+cd helpers
+python log_golden_triples.py
+
+```
+
+This script will create a file `helpers/golden_triples_log.txt`, containing each `description` tokens and the extracted golden triples for this `entity`. 
+
+> `Train Triples` are tuples of `(head entity, relation, tail entity)`
+
+The log will show details for each entity -> (1) tokens (2) train triples (showing the aliases depending on `head_id` and `tail_id`) aliases (3) golden triples  (showing the tokens depending on the extracted golden triple spans )
+
+Example one entry from the log:
+
+```golden_triples.log
+
+```
 
 ---
 

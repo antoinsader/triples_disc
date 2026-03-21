@@ -10,7 +10,7 @@ from tqdm import tqdm
 from utils.settings import settings
 from utils.files import cache_array, read_cached_array, scan_text_file_lines, save_tensor
 from utils.pre_processed_data import data_loader, check_minimized_files
-from utils.helpers import get_stop_words, get_strange_chars, ask_factor, timed_input
+from utils.helpers import  get_strange_chars, ask_factor, timed_input
 from operations.embedding import get_rel_embs, get_descriptions_embedding
 
 from operations.normalizer import Normalizer
